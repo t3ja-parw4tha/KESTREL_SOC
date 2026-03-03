@@ -556,5 +556,5 @@ See `LICENSE` for details.
 
 ## Author
 
-Built by [Sai Manikanta Teja Parwatha](https://linkedin.com/in/your-profile) as a security engineering portfolio project demonstrating SOC operations, detection engineering, cloud security, and AI-assisted triage.
+Built by [Sai Manikanta Teja Parwatha](https://www.linkedin.com/in/tejaparwatha/) demonstrating SOC operations, detection engineering, cloud security, and AI-assisted triage.
 
