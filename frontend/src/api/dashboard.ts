@@ -68,12 +68,27 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     Low: lowTotal.total,
   }
 
-  const volumeMap: Record<string, number> = {}
-  recentRes.alerts.forEach((a) => {
+  // Build 7-day timeline from all alerts, not just recent 10
+  // Generate last 7 dates as keys
+  const last7: Record<string, number> = {}
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    last7[d.toISOString().slice(0, 10)] = 0
+  }
+
+  // Count from recentRes (limit 10 is not enough for 7 days)
+  // Instead fetch more for timeline purposes
+  const timelineRes = await safe(
+    () => getAlerts({ page: 1, limit: 100 }),
+    emptyAlerts
+  )
+  timelineRes.alerts.forEach((a) => {
     const d = a.created_at?.slice(0, 10) || ''
-    if (d) volumeMap[d] = (volumeMap[d] || 0) + 1
+    if (d && d in last7) last7[d] = (last7[d] || 0) + 1
   })
-  const volume_timeline = Object.entries(volumeMap)
+
+  const volume_timeline = Object.entries(last7)
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date))
 

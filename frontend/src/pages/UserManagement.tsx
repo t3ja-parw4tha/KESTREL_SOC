@@ -27,7 +27,7 @@ export function UserManagement() {
   const authHeader = useMemo(() => {
     const token = sessionStorage.getItem('kestrel_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
-  }, [])
+  }, [user?.id])
 
   useEffect(() => {
     fetchUsers()
@@ -195,27 +195,31 @@ export function UserManagement() {
                   {u.created_at?.slice(0, 10) ?? '-'}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex gap-2 items-center">
-                    <select
-                      value={u.role}
-                      onChange={(e) => updateUser(u.id, { role: e.target.value })}
-                      disabled={busyId === u.id}
-                      className="px-2 py-1 rounded border border-soc-border bg-soc-bg text-soc-text text-xs"
-                    >
-                      <option value="viewer">Viewer</option>
-                      <option value="analyst">Analyst</option>
-                      <option value="senior_analyst">Senior Analyst</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => updateUser(u.id, { is_active: !u.is_active })}
-                      disabled={busyId === u.id}
-                      className="px-2 py-1 rounded border border-soc-border text-soc-muted hover:text-soc-text text-xs"
-                    >
-                      {u.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </div>
+                  {String(u.id) === String(user?.id) ? (
+                    <span className="text-xs text-soc-muted italic">(you)</span>
+                  ) : (
+                    <div className="flex gap-2 items-center">
+                      <select
+                        value={u.role}
+                        onChange={(e) => updateUser(u.id, { role: e.target.value })}
+                        disabled={busyId === u.id}
+                        className="px-2 py-1 rounded border border-soc-border bg-soc-bg text-soc-text text-xs"
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="analyst">Analyst</option>
+                        <option value="senior_analyst">Senior Analyst</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => updateUser(u.id, { is_active: !u.is_active })}
+                        disabled={busyId === u.id}
+                        className="px-2 py-1 rounded border border-soc-border text-soc-muted hover:text-soc-text text-xs"
+                      >
+                        {u.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

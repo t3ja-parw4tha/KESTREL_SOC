@@ -36,8 +36,8 @@ KESTREL is an open-source AI-assisted SOC platform that:
 ### 1. Clone and setup
 
 ```bash
-git clone https://github.com/yourname/kestrel
-cd kestrel
+git clone https://github.com/t3ja-parw4tha/KESTREL.git
+cd KESTREL
 python -m venv .venv
 
 # Windows
@@ -78,6 +78,9 @@ By default KESTREL will fall back to rule-based summaries if no AI key is config
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-your-openai-api-key
 ```
+
+You can also configure AI from the **Settings → AI Configuration** page in the UI.  
+Secrets are written to `.env` securely and redacted when read back.
 
 #### Anthropic Claude
 
@@ -126,6 +129,9 @@ ABUSEIPDB_API_KEY=your-abuseipdb-key
 SLACK_WEBHOOK_URL=https://hooks.slack.com/your-webhook
 ```
 
+All of the above can also be managed from the in-app **Settings → Source Integrations / Notifications** tabs.  
+The **Sources** page then shows connector status (Connected / Not Configured / Push Ready) and lets you quickly see coverage.
+
 ### 5. Initialize database
 
 ```bash
@@ -134,9 +140,23 @@ alembic upgrade head
 
 ### 6. Create admin user
 
-```bash
-python -m scripts.create_admin --username admin --password "YourPassword123!!"
-```
+You can either use the **web Setup Wizard** (recommended) or the CLI script.
+
+- **Option A — Setup Wizard (UI, recommended)**
+
+  1. Start the backend and frontend (see steps 8 and 9 below).
+  2. Visit `http://localhost:5173/setup`.
+  3. The wizard will:
+     - Create the first **admin** account.
+     - Optionally configure your initial AI provider.
+
+  The wizard is only available while there are **no users** in the database.
+
+- **Option B — CLI script**
+
+  ```bash
+  python -m scripts.create_admin --username admin --password "YourPassword123!!"
+  ```
 
 ### 7. Load sample data (optional)
 
@@ -230,6 +250,9 @@ Content-Type: application/json
 }
 ```
 
+You can also manage users from the **Users** page in the UI (admin-only).  
+KESTREL prevents an admin from changing or deactivating their **own** account via the UI to avoid accidental lockouts.
+
 ---
 
 ## AI Configuration
@@ -241,9 +264,14 @@ KESTREL uses AI to:
 - Suggest remediation steps
 - Recommend next actions for analysts
 
-If no AI provider is configured (no key), KESTREL falls back to a **rule-based summary** so the UI never shows empty analysis.
+If no AI provider is configured (no key), KESTREL falls back to a **rule-based summary** so the UI never shows empty analysis.  
+These stub summaries are **not cached** in the database, so once you add a real AI key you can re-run analysis and see full LLM output.
 
-To enable real AI triage, add your provider key to `.env`, restart the backend, then click **“Run AI Analysis”** on any alert detail page.
+To enable real AI triage, add your provider key to `.env` (or via **Settings → AI Configuration**), restart the backend if needed, then click **“Run AI Analysis”** on any alert detail page.
+
+The **AI Analysis** tab on `Alert Detail` also:
+- Shows a clear error if AI analysis fails (for example, missing or invalid key).
+- Indicates when you are seeing a rule-based summary instead of real AI output.
 
 ---
 
@@ -304,7 +332,7 @@ Services (depending on your compose file):
 kestrel/
 ├── app/
 │   ├── ai/          # AI provider clients and prompts
-│   ├── api/         # FastAPI routers (auth, alerts, incidents, ingest, ai)
+│   ├── api/         # FastAPI routers (auth, alerts, incidents, ingest, ai, settings)
 │   ├── core/        # Decision engine, parsers, MITRE mapping, detection rules
 │   ├── enrichment/  # VirusTotal, AbuseIPDB, threat feeds
 │   ├── models/      # SQLAlchemy models
@@ -313,7 +341,7 @@ kestrel/
 ├── frontend/
 │   ├── src/
 │   │   ├── api/       # Typed API client functions
-│   │   ├── pages/     # React pages (Dashboard, Alerts, Incidents, MITRE, Sources)
+│   │   ├── pages/     # React pages (Dashboard, Alerts, Alert Detail, Incidents, MITRE, Sources, Settings, User Management, Setup Wizard)
 │   │   ├── components/# Reusable UI and domain components
 │   │   └── security/  # Auth context, route guards
 │   └── templates/     # Jinja2 templates (for server-rendered views)

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAlert } from '@/hooks/useAlerts'
 import { useQuery } from '@tanstack/react-query'
-import { triggerAI, getTimeline, updateAlertStatus } from '@/api/alerts'
+import { triggerAI, getTimeline, updateAlertStatus, addComment } from '@/api/alerts'
 import { Card } from '@/components/ui/Card'
 import { AlertBadge } from '@/components/alerts/AlertBadge'
 import { MitreTags } from '@/components/alerts/MitreTags'
@@ -43,6 +43,9 @@ export function AlertDetail() {
   const [tab, setTab] = useState<TabId>('overview')
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [comment, setComment] = useState('')
+  const [commentLoading, setCommentLoading] = useState(false)
 
   const { data: alert, isLoading, isError, refetch } = useAlert(id)
 
@@ -68,12 +71,12 @@ export function AlertDetail() {
   const handleRunAI = async () => {
     if (!id) return
     setAiLoading(true)
+    setAiError('')
     try {
       await triggerAI(id)
       await refetch()
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('AI triage failed:', e)
+      setAiError('AI analysis failed. Check Settings to configure an AI provider.')
     } finally {
       setAiLoading(false)
     }
@@ -82,6 +85,18 @@ export function AlertDetail() {
   const handleCopyRaw = () => {
     if (alert.raw) {
       navigator.clipboard.writeText(JSON.stringify(alert.raw, null, 2))
+    }
+  }
+
+  const handleAddComment = async () => {
+    if (!id || !comment.trim()) return
+    setCommentLoading(true)
+    try {
+      await addComment(id, comment.trim())
+      setComment('')
+      refetch()
+    } finally {
+      setCommentLoading(false)
     }
   }
 
@@ -120,15 +135,6 @@ export function AlertDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={handleRunAI}
-            disabled={aiLoading}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-text hover:bg-soc-border/30 disabled:opacity-50 text-sm"
-          >
-            {aiLoading ? <Spinner size="sm" /> : <Sparkles className="w-4 h-4" />}
-            Run AI Analysis
-          </button>
           <button
             type="button"
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-text hover:bg-soc-border/30 text-sm"
@@ -219,6 +225,15 @@ export function AlertDetail() {
               </button>
             </div>
 
+            {aiError && (
+              <p className="text-red-400 text-sm p-2 rounded bg-red-500/10 border border-red-500/20">
+                {aiError}
+                <a href="/settings" className="ml-2 text-blue-400 underline">
+                  Configure AI →
+                </a>
+              </p>
+            )}
+
             {!alert.ai_summary && !aiLoading && (
               <div className="rounded-lg border border-soc-border bg-soc-surface/50 p-6 text-center">
                 <Sparkles className="w-8 h-8 text-soc-muted mx-auto mb-2" />
@@ -245,6 +260,16 @@ export function AlertDetail() {
                     {alert.ai_summary}
                   </p>
                 </div>
+
+                {alert.ai_summary?.startsWith('Summary for alert:') && (
+                  <p className="text-xs text-amber-400 mt-2">
+                    ⚠ Showing rule-based summary. Add an OpenAI key in{' '}
+                    <a href="/settings" className="underline">
+                      Settings
+                    </a>{' '}
+                    for full AI analysis.
+                  </p>
+                )}
 
                 {alert.ai_key_facts && Object.keys(alert.ai_key_facts as Record<string, unknown>).length > 0 && (
                   <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
@@ -359,7 +384,15 @@ export function AlertDetail() {
           </div>
         )}
 
-        {tab === 'timeline' && id && <TimelineTab alertId={id} />}
+        {tab === 'timeline' && id && (
+          <TimelineTab
+            alertId={id}
+            comment={comment}
+            setComment={setComment}
+            commentLoading={commentLoading}
+            onAddComment={handleAddComment}
+          />
+        )}
 
         {tab === 'raw' && (
           <div>
@@ -376,7 +409,19 @@ export function AlertDetail() {
   )
 }
 
-function TimelineTab({ alertId }: { alertId: string }) {
+function TimelineTab({
+  alertId,
+  comment,
+  setComment,
+  commentLoading,
+  onAddComment,
+}: {
+  alertId: string
+  comment: string
+  setComment: (value: string) => void
+  commentLoading: boolean
+  onAddComment: () => void
+}) {
   const { data, isLoading } = useQuery({
     queryKey: ['alert', 'timeline', alertId],
     queryFn: () => getTimeline(alertId),
@@ -396,6 +441,29 @@ function TimelineTab({ alertId }: { alertId: string }) {
         </div>
       ))}
       {timeline.length === 0 && <p className="text-soc-muted text-sm">No timeline events.</p>}
+      <div className="mt-4 border-t border-soc-border pt-4">
+        <p className="text-xs text-soc-muted mb-2">Add note</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onAddComment()}
+            placeholder="Investigation note..."
+            className="flex-1 px-3 py-1.5 rounded border border-soc-border 
+                   bg-soc-bg text-soc-text text-sm focus:outline-none 
+                   focus:border-blue-500"
+          />
+          <button
+            onClick={onAddComment}
+            disabled={commentLoading || !comment.trim()}
+            className="px-3 py-1.5 rounded bg-blue-600 text-white 
+                   text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {commentLoading ? '...' : 'Add'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

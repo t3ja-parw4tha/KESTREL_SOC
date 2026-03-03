@@ -8,6 +8,7 @@ import {
   Shield,
   Users,
   Github,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useAuth } from '@/security/AuthContext'
@@ -73,23 +74,39 @@ export function Sidebar({ openAlertsCount = 0, openIncidentsCount = 0 }: Sidebar
             </NavLink>
           )
         })}
-        {user?.role === 'admin' && (
+      </nav>
+      {user?.role === 'admin' && (
+        <div className="mt-auto pt-4 border-t border-soc-border px-2 space-y-1">
           <NavLink
             to="/users"
             className={({ isActive }) =>
               cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-soc-muted transition-colors',
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
                 isActive
                   ? 'bg-soc-border text-soc-text'
                   : 'text-soc-muted hover:text-soc-text hover:bg-soc-border/50'
               )
             }
           >
-            <Users className="w-5 h-5 shrink-0" aria-hidden />
+            <Users className="w-4 h-4" aria-hidden />
             <span className="flex-1 truncate">Users</span>
           </NavLink>
-        )}
-      </nav>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                isActive
+                  ? 'bg-soc-border text-soc-text'
+                  : 'text-soc-muted hover:text-soc-text hover:bg-soc-border/50'
+              )
+            }
+          >
+            <SettingsIcon className="w-4 h-4" aria-hidden />
+            <span className="flex-1 truncate">Settings</span>
+          </NavLink>
+        </div>
+      )}
       <div className="p-2 border-t border-soc-border">
         <div className="px-3 py-2 text-xs text-soc-muted">
           v{PLATFORM_VERSION}

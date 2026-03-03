@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/security/AuthContext'
 import { setUnauthorizedHandler } from '@/api/client'
@@ -14,6 +14,8 @@ import { IncidentDetail } from '@/pages/IncidentDetail'
 import { MitreCoverage } from '@/pages/MitreCoverage'
 import { Sources } from '@/pages/Sources'
 import { UserManagement } from '@/pages/UserManagement'
+import { Settings } from '@/pages/Settings'
+import { SetupWizard } from '@/pages/SetupWizard'
 import { Login } from '@/pages/Login'
 import { NotFound } from '@/pages/NotFound'
 
@@ -35,9 +37,29 @@ function AuthInterceptorSetup() {
   return null
 }
 
+function SetupCheck() {
+  const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
+
+  useEffect(() => {
+    if (isAuthenticated) return
+    fetch('/api/v1/auth/setup-status')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.setup_complete) {
+          navigate('/setup')
+        }
+      })
+      .catch(() => {})
+  }, [isAuthenticated, navigate])
+
+  return null
+}
+
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/setup" element={<SetupWizard />} />
       <Route path="/login" element={<Login />} />
       <Route
         path="/"
@@ -62,6 +84,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="settings"
+          element={
+            <AdminRoute>
+              <Settings />
+            </AdminRoute>
+          }
+        />
+        <Route
           path="users"
           element={
             <AdminRoute>
@@ -82,6 +112,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <AuthInterceptorSetup />
+          <SetupCheck />
           <SessionTimeoutModal />
           <AppRoutes />
         </BrowserRouter>

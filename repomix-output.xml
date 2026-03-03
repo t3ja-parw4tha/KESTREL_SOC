@@ -74,6 +74,7 @@ app/api/ingest.py
 app/api/mitre.py
 app/api/pages.py
 app/api/security_dashboard.py
+app/api/settings.py
 app/api/sources.py
 app/config.py
 app/connectors/__init__.py
@@ -241,7 +242,10 @@ frontend/src/pages/Incidents.tsx
 frontend/src/pages/Login.tsx
 frontend/src/pages/MitreCoverage.tsx
 frontend/src/pages/NotFound.tsx
+frontend/src/pages/Settings.tsx
+frontend/src/pages/SetupWizard.tsx
 frontend/src/pages/Sources.tsx
+frontend/src/pages/UserManagement.tsx
 frontend/src/security/AuthContext.tsx
 frontend/src/security/display.ts
 frontend/src/security/ProtectedRoute.tsx
@@ -313,6 +317,844 @@ tests/test_parsers.py
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="app/api/settings.py">
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from app.config import get_settings
+from app.security.rbac import require_permission
+
+router = APIRouter(prefix="/settings", tags=["settings"])
+
+ENV_PATH = Path(".env")
+
+ALLOWED_KEYS = {
+    # AI
+    "OPENAI_API_KEY",
+    "AI_PROVIDER",
+    "ANTHROPIC_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_ENDPOINT",
+    # Sentinel
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "LOGANALYTICS_WORKSPACE_ID",
+    # AWS
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+    # Enrichment
+    "VIRUSTOTAL_API_KEY",
+    "ABUSEIPDB_API_KEY",
+    # Notifications
+    "SLACK_WEBHOOK_URL",
+    "ALERT_EMAIL",
+    # Suricata
+    "SURICATA_EVE_PATH",
+}
+
+REDACTED = "[REDACTED]"
+SENSITIVE = {
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_CLIENT_SECRET",
+    "AWS_SECRET_ACCESS_KEY",
+    "VIRUSTOTAL_API_KEY",
+    "ABUSEIPDB_API_KEY",
+    "AZURE_CLIENT_ID",
+}
+
+
+def read_env() -> dict[str, str]:
+    """Read current .env file into a dict."""
+    if not ENV_PATH.exists():
+        return {}
+    result: dict[str, str] = {}
+    for line in ENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip('"').strip("'")
+    return result
+
+
+def write_env(data: dict[str, str]) -> None:
+    """Write dict back to .env file safely."""
+    lines: list[str] = []
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                lines.append(line)
+                continue
+            key = stripped.partition("=")[0].strip()
+            if key not in data:
+                lines.append(line)
+    for key, value in data.items():
+        lines.append(f'{key}="{value}"')
+    ENV_PATH.write_text("\n".join(lines) + "\n")
+
+
+def redact(data: dict[str, str]) -> dict[str, str]:
+    """Redact sensitive values before sending to frontend."""
+    return {
+        k: (REDACTED if k in SENSITIVE and v else v)
+        for k, v in data.items()
+    }
+
+
+class SettingsUpdate(BaseModel):
+    key: str
+    value: str
+
+
+class SettingsBulkUpdate(BaseModel):
+    settings: dict[str, str]
+
+
+@router.get("")
+async def get_settings_view(
+    _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+):
+    """Return current settings with sensitive values redacted."""
+    current = read_env()
+    filtered = {k: v for k, v in current.items() if k in ALLOWED_KEYS}
+    return {
+        "settings": redact(filtered),
+        "configured": {
+            "ai": bool(current.get("OPENAI_API_KEY") or current.get("ANTHROPIC_API_KEY")),
+            "sentinel": bool(current.get("AZURE_TENANT_ID") and current.get("AZURE_CLIENT_ID")),
+            "guardduty": bool(current.get("AWS_ACCESS_KEY_ID")),
+            "virustotal": bool(current.get("VIRUSTOTAL_API_KEY")),
+            "abuseipdb": bool(current.get("ABUSEIPDB_API_KEY")),
+            "slack": bool(current.get("SLACK_WEBHOOK_URL")),
+        },
+    }
+
+
+@router.post("")
+async def update_settings(
+    body: SettingsBulkUpdate,
+    _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+):
+    """Update multiple settings. Writes to local .env file."""
+    bad_keys = set(body.settings.keys()) - ALLOWED_KEYS
+    if bad_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown settings keys: {bad_keys}",
+        )
+    skip = {k for k, v in body.settings.items() if v == REDACTED}
+    to_write = {k: v for k, v in body.settings.items() if k not in skip and v.strip()}
+    current = read_env()
+    current.update(to_write)
+    write_env(current)
+    get_settings.cache_clear()
+    return {"updated": list(to_write.keys()), "skipped": list(skip)}
+
+
+@router.delete("/{key}")
+async def delete_setting(
+    key: str,
+    _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+):
+    """Remove a setting from .env."""
+    if key not in ALLOWED_KEYS:
+        raise HTTPException(status_code=400, detail="Unknown key")
+    current = read_env()
+    current.pop(key, None)
+    write_env(current)
+    get_settings.cache_clear()
+    return {"deleted": key}
+
+
+@router.post("/test/{source}")
+async def test_connection(
+    source: str,
+    _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+):
+    """Test a specific source connection."""
+    current = read_env()
+
+    if source == "sentinel":
+        if not current.get("AZURE_TENANT_ID"):
+            return {"status": "error", "message": "Sentinel not configured"}
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.post(
+                    f"https://login.microsoftonline.com/{current['AZURE_TENANT_ID']}/oauth2/v2.0/token",
+                    data={
+                        "client_id": current.get("AZURE_CLIENT_ID", ""),
+                        "client_secret": current.get("AZURE_CLIENT_SECRET", ""),
+                        "scope": "https://api.loganalytics.io/.default",
+                        "grant_type": "client_credentials",
+                    },
+                )
+            if r.status_code == 200:
+                return {"status": "ok", "message": "Sentinel connection successful"}
+            return {"status": "error", "message": f"Auth failed: {r.status_code}"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": str(e)}
+
+    if source == "virustotal":
+        if not current.get("VIRUSTOTAL_API_KEY"):
+            return {"status": "error", "message": "VirusTotal not configured"}
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://www.virustotal.com/api/v3/ip_addresses/8.8.8.8",
+                    headers={"x-apikey": current["VIRUSTOTAL_API_KEY"]},
+                )
+            if r.status_code == 200:
+                return {"status": "ok", "message": "VirusTotal connection successful"}
+            return {"status": "error", "message": f"API error: {r.status_code}"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": str(e)}
+
+    if source == "abuseipdb":
+        if not current.get("ABUSEIPDB_API_KEY"):
+            return {"status": "error", "message": "AbuseIPDB not configured"}
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.abuseipdb.com/api/v2/check",
+                    headers={"Key": current["ABUSEIPDB_API_KEY"]},
+                    params={"ipAddress": "8.8.8.8"},
+                )
+            if r.status_code == 200:
+                return {"status": "ok", "message": "AbuseIPDB connection successful"}
+            return {"status": "error", "message": f"API error: {r.status_code}"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": str(e)}
+
+    return {"status": "error", "message": f"Unknown source: {source}"}
+</file>
+
+<file path="frontend/src/pages/Settings.tsx">
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/security/AuthContext'
+import {
+  Sparkles,
+  Database,
+  Bell,
+  Users,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Save,
+} from 'lucide-react'
+
+type Tab = 'ai' | 'sources' | 'notifications' | 'users'
+
+interface SettingsData {
+  settings: Record<string, string>
+  configured: Record<string, boolean>
+}
+
+export function Settings() {
+  const { user } = useAuth()
+  const [tab, setTab] = useState<Tab>('ai')
+  const [data, setData] = useState<SettingsData | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({})
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<Record<string, { status: string; message: string }>>({})
+  const [saveMsg, setSaveMsg] = useState('')
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  const loadSettings = async () => {
+    const res = await fetch('/api/v1/settings', {
+      headers: {
+        Authorization: `Bearer ${sessionStorage.getItem('kestrel_token')}`,
+      },
+    })
+    if (res.ok) {
+      const d = await res.json()
+      setData(d)
+      setForm(d.settings)
+    }
+  }
+
+  const save = async (keys: string[]) => {
+    setSaving(true)
+    setSaveMsg('')
+    const subset = Object.fromEntries(keys.map((k) => [k, form[k] ?? '']))
+    const res = await fetch('/api/v1/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionStorage.getItem('kestrel_token')}`,
+      },
+      body: JSON.stringify({ settings: subset }),
+    })
+    setSaving(false)
+    if (res.ok) {
+      setSaveMsg('Saved successfully')
+      loadSettings()
+      setTimeout(() => setSaveMsg(''), 3000)
+    }
+  }
+
+  const testConn = async (source: string) => {
+    setTesting(source)
+    const res = await fetch(`/api/v1/settings/test/${source}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sessionStorage.getItem('kestrel_token')}`,
+      },
+    })
+    const d = await res.json()
+    setTestResult((prev) => ({ ...prev, [source]: d }))
+    setTesting(null)
+  }
+
+  const field = (
+    key: string,
+    label: string,
+    placeholder: string,
+    sensitive = false,
+    type = 'text'
+  ) => {
+    const show = showSecrets[key]
+    const inputType = sensitive && !show ? 'password' : type
+    return (
+      <div key={key}>
+        <label className="block text-xs text-soc-muted mb-1">{label}</label>
+        <div className="relative">
+          <input
+            type={inputType}
+            value={form[key] ?? ''}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                [key]: e.target.value,
+              }))
+            }
+            placeholder={placeholder}
+            className="w-full px-3 py-2 rounded border border-soc-border 
+                       bg-soc-bg text-soc-text text-sm pr-10
+                       focus:outline-none focus:border-blue-500"
+          />
+          {sensitive && (
+            <button
+              type="button"
+              onClick={() =>
+                setShowSecrets((prev) => ({
+                  ...prev,
+                  [key]: !prev[key],
+                }))
+              }
+              className="absolute right-2 top-2.5 
+                         text-soc-muted hover:text-soc-text"
+            >
+              {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const sectionCard = (
+    title: string,
+    description: string,
+    configuredKey: string | null,
+    fields: JSX.Element[],
+    saveKeys: string[],
+    testSource?: string
+  ) => {
+    const isConfigured = configuredKey ? data?.configured[configuredKey] : false
+    return (
+      <div className="rounded-lg border border-soc-border bg-soc-surface p-5 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-soc-text">{title}</h3>
+              {configuredKey && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full
+                  ${
+                    isConfigured
+                      ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                      : 'bg-soc-border text-soc-muted'
+                  }`}
+                >
+                  {isConfigured ? 'Configured' : 'Not configured'}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-soc-muted mt-0.5">{description}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3">{fields}</div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => save(saveKeys)}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 
+                       rounded bg-blue-600 text-white text-sm 
+                       hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            Save
+          </button>
+
+          {testSource && (
+            <button
+              type="button"
+              onClick={() => testConn(testSource)}
+              disabled={testing === testSource}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 
+                         rounded border border-soc-border text-soc-muted 
+                         text-sm hover:text-soc-text disabled:opacity-50"
+            >
+              {testing === testSource ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Test Connection
+            </button>
+          )}
+
+          {testSource && testResult[testSource] && (
+            <span
+              className={`text-xs flex items-center gap-1
+              ${
+                testResult[testSource].status === 'ok'
+                  ? 'text-green-400'
+                  : 'text-red-400'
+              }`}
+            >
+              {testResult[testSource].status === 'ok' ? (
+                <CheckCircle2 className="w-3 h-3" />
+              ) : (
+                <XCircle className="w-3 h-3" />
+              )}
+              {testResult[testSource].message}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const TABS = [
+    { id: 'ai' as Tab, label: 'AI Configuration', icon: Sparkles },
+    { id: 'sources' as Tab, label: 'Source Integrations', icon: Database },
+    { id: 'notifications' as Tab, label: 'Notifications', icon: Bell },
+    { id: 'users' as Tab, label: 'Users', icon: Users },
+  ]
+
+  if (!user || user.role !== 'admin') {
+    return (
+      <div className="rounded-lg border border-soc-border bg-soc-surface p-6">
+        <h1 className="text-lg font-semibold text-soc-text mb-2">Settings</h1>
+        <p className="text-sm text-soc-muted">
+          Only administrators can view and edit platform settings.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-soc-text">Settings</h1>
+          <p className="text-sm text-soc-muted mt-0.5">
+            Configuration saved locally — never pushed to repository
+          </p>
+        </div>
+        {saveMsg && (
+          <span className="text-green-400 text-sm flex items-center gap-1">
+            <CheckCircle2 className="w-4 h-4" /> {saveMsg}
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-1 border-b border-soc-border">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm 
+                        border-b-2 transition-colors
+              ${
+                tab === id
+                  ? 'border-blue-500 text-soc-text'
+                  : 'border-transparent text-soc-muted hover:text-soc-text'
+              }`}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'ai' && (
+        <div className="space-y-4">
+          {sectionCard(
+            'OpenAI',
+            'Powers alert triage, summarization, and remediation suggestions',
+            'ai',
+            [field('AI_PROVIDER', 'Provider', 'openai', false), field('OPENAI_API_KEY', 'API Key', 'sk-...', true)],
+            ['AI_PROVIDER', 'OPENAI_API_KEY']
+          )}
+          {sectionCard(
+            'Anthropic Claude',
+            'Alternative AI provider for alert analysis',
+            null,
+            [field('ANTHROPIC_API_KEY', 'API Key', 'sk-ant-...', true)],
+            ['ANTHROPIC_API_KEY']
+          )}
+          {sectionCard(
+            'Azure OpenAI',
+            'Enterprise Azure OpenAI deployment',
+            null,
+            [
+              field('AZURE_OPENAI_API_KEY', 'API Key', 'your-key', true),
+              field('AZURE_OPENAI_ENDPOINT', 'Endpoint', 'https://your-resource.openai.azure.com'),
+            ],
+            ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT']
+          )}
+        </div>
+      )}
+
+      {tab === 'sources' && (
+        <div className="space-y-4">
+          {sectionCard(
+            'Microsoft Sentinel',
+            'Pull alerts from Azure Log Analytics via KQL',
+            'sentinel',
+            [
+              field('AZURE_TENANT_ID', 'Tenant ID', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'),
+              field('AZURE_CLIENT_ID', 'Client ID', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'),
+              field('AZURE_CLIENT_SECRET', 'Client Secret', 'your-secret', true),
+              field('LOGANALYTICS_WORKSPACE_ID', 'Workspace ID', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'),
+            ],
+            ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'LOGANALYTICS_WORKSPACE_ID'],
+            'sentinel'
+          )}
+          {sectionCard(
+            'AWS GuardDuty',
+            'Pull threat findings from AWS GuardDuty',
+            'guardduty',
+            [
+              field('AWS_ACCESS_KEY_ID', 'Access Key ID', 'AKIAIOSFODNN7EXAMPLE'),
+              field('AWS_SECRET_ACCESS_KEY', 'Secret Access Key', 'your-secret', true),
+              field('AWS_REGION', 'Region', 'us-east-1'),
+            ],
+            ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION'],
+            'guardduty'
+          )}
+          {sectionCard(
+            'VirusTotal',
+            'IP and file hash reputation enrichment',
+            'virustotal',
+            [field('VIRUSTOTAL_API_KEY', 'API Key', 'your-vt-api-key', true)],
+            ['VIRUSTOTAL_API_KEY'],
+            'virustotal'
+          )}
+          {sectionCard(
+            'AbuseIPDB',
+            'IP abuse confidence scoring and geo lookup',
+            'abuseipdb',
+            [field('ABUSEIPDB_API_KEY', 'API Key', 'your-abuseipdb-key', true)],
+            ['ABUSEIPDB_API_KEY'],
+            'abuseipdb'
+          )}
+          {sectionCard(
+            'Suricata / Snort',
+            'Network IDS/IPS — push logs via ingest API or file path',
+            null,
+            [field('SURICATA_EVE_PATH', 'EVE JSON Path', '/var/log/suricata/eve.json')],
+            ['SURICATA_EVE_PATH']
+          )}
+        </div>
+      )}
+
+      {tab === 'notifications' && (
+        <div className="space-y-4">
+          {sectionCard(
+            'Slack',
+            'Send critical alert notifications to a Slack channel',
+            'slack',
+            [field('SLACK_WEBHOOK_URL', 'Webhook URL', 'https://hooks.slack.com/services/...', true)],
+            ['SLACK_WEBHOOK_URL'],
+            'slack'
+          )}
+          {sectionCard(
+            'Email Alerts',
+            'Send email notifications for critical alerts',
+            null,
+            [field('ALERT_EMAIL', 'Alert Email Address', 'soc@yourcompany.com')],
+            ['ALERT_EMAIL']
+          )}
+        </div>
+      )}
+
+      {tab === 'users' && (
+        <div className="rounded-lg border border-soc-border bg-soc-surface p-5">
+          <h3 className="text-sm font-semibold text-soc-text mb-1">User Management</h3>
+          <p className="text-xs text-soc-muted mb-4">
+            Create and manage analyst accounts with role-based access
+          </p>
+
+          <a
+            href="/users"
+            className="inline-flex items-center gap-2 px-3 py-1.5 
+                       rounded bg-blue-600 text-white text-sm 
+                       hover:bg-blue-700"
+          >
+            <Users className="w-4 h-4" />
+            Manage Users
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/pages/SetupWizard.tsx">
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { CheckCircle2 } from 'lucide-react'
+
+export function SetupWizard() {
+  const [step, setStep] = useState(1)
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    confirmPassword: '',
+    aiProvider: 'openai',
+    aiKey: '',
+  })
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  const createAdmin = async () => {
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/v1/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: form.username,
+          password: form.password,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setError(d.detail ?? 'Setup failed')
+        return
+      }
+      setStep(2)
+    } catch {
+      setError('Could not connect to server')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveAI = async () => {
+    if (!form.aiKey) {
+      setStep(3)
+      return
+    }
+    const keyName = form.aiProvider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'
+
+    const loginRes = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: form.username,
+        password: form.password,
+      }),
+    })
+    if (!loginRes.ok) {
+      setStep(3)
+      return
+    }
+    const { access_token } = await loginRes.json()
+
+    await fetch('/api/v1/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${access_token}`,
+      },
+      body: JSON.stringify({
+        settings: {
+          AI_PROVIDER: form.aiProvider,
+          [keyName]: form.aiKey,
+        },
+      }),
+    })
+    setStep(3)
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-soc-bg">
+      <div className="w-full max-w-md p-8 rounded-xl border border-soc-border bg-soc-surface shadow-xl">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
+            <span className="text-white font-bold text-sm">K</span>
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold text-soc-text">KESTREL</h1>
+            <p className="text-xs text-soc-muted">First-time setup</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mb-6">
+          {[1, 2, 3].map((s) => (
+            <div
+              key={s}
+              className={`h-1 flex-1 rounded-full transition-colors ${
+                s <= step ? 'bg-blue-500' : 'bg-soc-border'
+              }`}
+            />
+          ))}
+        </div>
+
+        {step === 1 && (
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-base font-medium text-soc-text">Create Admin Account</h2>
+              <p className="text-xs text-soc-muted mt-0.5">
+                This account will have full access to KESTREL
+              </p>
+            </div>
+            {error && (
+              <p className="text-red-400 text-sm p-2 rounded bg-red-500/10 border border-red-500/20">
+                {error}
+              </p>
+            )}
+            <input
+              placeholder="Username"
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+            />
+            <input
+              type="password"
+              placeholder="Password (min 12 characters)"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+            />
+            <input
+              type="password"
+              placeholder="Confirm password"
+              value={form.confirmPassword}
+              onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+            />
+            <button
+              type="button"
+              onClick={createAdmin}
+              disabled={loading}
+              className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? 'Creating...' : 'Create Account →'}
+            </button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-base font-medium text-soc-text">Configure AI Provider</h2>
+              <p className="text-xs text-soc-muted mt-0.5">
+                Powers alert triage and summarization. Skip to configure later.
+              </p>
+            </div>
+            <select
+              value={form.aiProvider}
+              onChange={(e) => setForm({ ...form, aiProvider: e.target.value })}
+              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+            >
+              <option value="openai">OpenAI (GPT-4o-mini)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+            <input
+              type="password"
+              placeholder={form.aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+              value={form.aiKey}
+              onChange={(e) => setForm({ ...form, aiKey: e.target.value })}
+              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStep(3)}
+                className="flex-1 py-2 rounded border border-soc-border text-soc-muted text-sm hover:text-soc-text"
+              >
+                Skip for now
+              </button>
+              <button
+                type="button"
+                onClick={saveAI}
+                className="flex-1 py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+              >
+                Save &amp; Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-6 h-6 text-green-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-medium text-soc-text">KESTREL is ready</h2>
+              <p className="text-xs text-soc-muted mt-0.5">
+                Configure source integrations in Settings anytime
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/login')}
+              className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              Go to Login →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+</file>
 
 <file path=".env.example">
 # Platform
@@ -1294,7 +2136,11 @@ async def summarize_alert(
 
     now = datetime.now(timezone.utc)
     cache_cutoff = now - timedelta(hours=CACHE_TTL_HOURS)
-    if alert.ai_summary and alert.updated_at and alert.updated_at >= cache_cutoff:
+    updated_at = alert.updated_at
+    if updated_at is not None and updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    is_stub = bool(alert.ai_summary and alert.ai_summary.startswith("Summary for alert:"))
+    if alert.ai_summary and not is_stub and updated_at and updated_at >= cache_cutoff:
         return SummarizeResponse(
             alert_id=alert.id,
             ai_summary=alert.ai_summary,
@@ -1320,25 +2166,41 @@ async def summarize_alert(
         "risk_score": alert.risk_score,
     }
     result = await run_ai_triage(alert_dict)
-
-    alert.ai_summary = result.get("summary", "No summary available.")
-    alert.ai_key_facts = result.get("key_facts", {})
-    alert.ai_affected = result.get("affected", {})
-    alert.ai_evidence = result.get("evidence", {})
-    alert.ai_remediation = result.get("remediation", {})
-    alert.ai_next_steps = result.get("next_steps", {})
-    await db.flush()
-
-    return SummarizeResponse(
-        alert_id=alert.id,
-        ai_summary=alert.ai_summary,
-        ai_key_facts=alert.ai_key_facts,
-        ai_affected=alert.ai_affected,
-        ai_evidence=alert.ai_evidence,
-        ai_remediation=alert.ai_remediation,
-        ai_next_steps=alert.ai_next_steps,
-        cached=False,
-    )
+    if result:
+        alert.ai_summary = result.get("summary", "")
+        alert.ai_key_facts = result.get("key_facts") or {}
+        alert.ai_affected = result.get("affected") or {}
+        alert.ai_evidence = result.get("evidence") or {}
+        alert.ai_remediation = result.get("remediation") or {}
+        alert.ai_next_steps = result.get("next_steps") or {}
+        alert.updated_at = datetime.now(timezone.utc)
+        await db.flush()
+        await db.commit()
+        return SummarizeResponse(
+            alert_id=alert.id,
+            ai_summary=alert.ai_summary,
+            ai_key_facts=alert.ai_key_facts,
+            ai_affected=alert.ai_affected,
+            ai_evidence=alert.ai_evidence,
+            ai_remediation=alert.ai_remediation,
+            ai_next_steps=alert.ai_next_steps,
+            cached=False,
+        )
+    else:
+        # No AI key configured — return stub in response
+        # but do NOT write to database so user can retry
+        # once they add an API key in Settings
+        stub = _stub_ai_summary(alert)
+        return SummarizeResponse(
+            alert_id=alert.id,
+            ai_summary=stub[0],
+            ai_key_facts=stub[1],
+            ai_affected=stub[2],
+            ai_evidence=stub[3],
+            ai_remediation=stub[4],
+            ai_next_steps=stub[5],
+            cached=False,
+        )
 </file>
 
 <file path="app/api/alerts.py">
@@ -1697,7 +2559,7 @@ async def list_audit_logs(
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -1710,6 +2572,8 @@ from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
     SessionResponse,
+    CreateUserRequest,
+    UpdateUserRequest,
 )
 from app.security.auth import (
     REFRESH_TOKEN_COOKIE,
@@ -1799,6 +2663,109 @@ async def login(
     _set_refresh_cookie(response, refresh_token)
     return LoginResponse(access_token=access_token, token_type="bearer", expires_in=expires_in)
 
+
+@router.post("/setup")
+async def first_time_setup(
+    body: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create first admin user. Only works if no users exist."""
+    count_r = await db.execute(select(func.count()).select_from(User))
+    count = count_r.scalar()
+    if count and count > 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Setup already completed. Use admin account.",
+        )
+    from app.security.auth import hash_password, validate_password_policy
+
+    validate_password_policy(body.password, body.username)
+    user = User(
+        username=body.username,
+        email=f"{body.username}@kestrel.local",
+        password_hash=hash_password(body.password),
+        role="admin",
+        is_active=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    await db.commit()
+    return {"created": True, "username": user.username}
+
+
+@router.get("/setup-status")
+async def setup_status(db: AsyncSession = Depends(get_db)):
+    """Check if initial setup is complete."""
+    count_r = await db.execute(select(func.count()).select_from(User))
+    count = count_r.scalar() or 0
+    return {"setup_complete": count > 0}
+
+@router.post("/users", status_code=201)
+async def create_user(
+    body: CreateUserRequest,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin only: create a new user with a specific role."""
+    from app.security.auth import hash_password, validate_password_policy
+
+    validate_password_policy(body.password, body.username)
+    existing = await db.execute(select(User).where(User.username == body.username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username already exists")
+    user = User(
+        username=body.username,
+        email=body.email or f"{body.username}@kestrel.local",
+        password_hash=hash_password(body.password),
+        role=body.role,
+        is_active=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    await db.commit()
+    return {"username": user.username, "role": user.role, "created": True}
+
+
+@router.get("/users")
+async def list_users(
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(User).order_by(User.created_at.desc()))
+    users = r.scalars().all()
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            }
+            for u in users
+        ]
+    }
+
+
+@router.patch("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    body: UpdateUserRequest,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(User).where(User.id == user_id))
+    u = r.scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if body.role is not None:
+        u.role = body.role
+    if body.is_active is not None:
+        u.is_active = body.is_active
+    u.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"updated": True}
 
 @router.post("/refresh", response_model=LoginResponse)
 async def refresh(
@@ -3309,6 +4276,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.config import get_settings
 from app.security.rbac import require_permission
 
 router = APIRouter(prefix="/sources", tags=["sources"])
@@ -3318,8 +4286,106 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 async def list_sources(
     _user: Annotated[dict, Depends(require_permission("sources:read"))],
 ):
-    """List configured sources (stub)."""
-    return {"items": []}
+    settings = get_settings()
+
+    def configured(keys: list[str]) -> bool:
+        for k in keys:
+            val = getattr(settings, k.lower(), "")
+            if hasattr(val, "get_secret_value"):
+                val = val.get_secret_value()
+            if not val:
+                return False
+        return True
+
+    sources = [
+        {
+            "id": "sentinel",
+            "name": "Microsoft Sentinel",
+            "type": "SIEM",
+            "status": "connected"
+            if configured(
+                [
+                    "azure_tenant_id",
+                    "azure_client_id",
+                    "azure_client_secret",
+                    "loganalytics_workspace_id",
+                ]
+            )
+            else "not_configured",
+            "description": "Azure Log Analytics — pulls SecurityAlert via KQL",
+            "push": False,
+        },
+        {
+            "id": "guardduty",
+            "name": "AWS GuardDuty",
+            "type": "Cloud",
+            "status": "connected"
+            if configured(["aws_access_key_id", "aws_secret_access_key"])
+            else "not_configured",
+            "description": "AWS threat detection findings",
+            "push": False,
+        },
+        {
+            "id": "virustotal",
+            "name": "VirusTotal",
+            "type": "Enrichment",
+            "status": "connected"
+            if configured(["virustotal_api_key"])
+            else "not_configured",
+            "description": "IP and hash reputation enrichment",
+            "push": False,
+        },
+        {
+            "id": "abuseipdb",
+            "name": "AbuseIPDB",
+            "type": "Enrichment",
+            "status": "connected"
+            if configured(["abuseipdb_api_key"])
+            else "not_configured",
+            "description": "IP abuse confidence scoring",
+            "push": False,
+        },
+        {
+            "id": "suricata",
+            "name": "Suricata IDS",
+            "type": "IDS/IPS",
+            "status": "push_ready",
+            "description": "Network IDS — send events to POST /api/v1/ingest",
+            "push": True,
+        },
+        {
+            "id": "windows",
+            "name": "Windows Event Log",
+            "type": "OS",
+            "status": "push_ready",
+            "description": "Windows security events — send to POST /api/v1/ingest",
+            "push": True,
+        },
+        {
+            "id": "defender",
+            "name": "Microsoft Defender",
+            "type": "EDR",
+            "status": "push_ready",
+            "description": "Defender alerts — send to POST /api/v1/ingest",
+            "push": True,
+        },
+        {
+            "id": "snort",
+            "name": "Snort",
+            "type": "IDS/IPS",
+            "status": "push_ready",
+            "description": "Network IDS — send to POST /api/v1/ingest",
+            "push": True,
+        },
+    ]
+
+    configured_count = sum(1 for s in sources if s["status"] == "connected")
+
+    return {
+        "items": sources,
+        "configured_count": configured_count,
+        "total_pull_sources": 4,
+    }
 </file>
 
 <file path="app/config.py">
@@ -6533,7 +7599,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources
+from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources, settings
 from app.api.health import set_start_time
 from app.config import get_settings
 from app.database import Base, engine
@@ -6563,8 +7629,8 @@ def create_app() -> FastAPI:
         await engine.dispose()
 
     app = FastAPI(
-        title="SOC Platform API",
-        description="AI-assisted SOC log aggregation and incident triage",
+        title="KESTREL API",
+        description="AI-assisted SOC triage and detection platform",
         version=settings.service_version,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -6605,6 +7671,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def internal_exception_handler(request: Request, exc: Exception):
         import logging
+
         logging.getLogger(__name__).exception("Unhandled exception: %s", exc)
         return JSONResponse(
             status_code=500,
@@ -6621,6 +7688,7 @@ def create_app() -> FastAPI:
     app.include_router(mitre.router, prefix="/api/v1")
     app.include_router(sources.router, prefix="/api/v1")
     app.include_router(audit.router, prefix="/api/v1")
+    app.include_router(settings.router, prefix="/api/v1")
     app.include_router(health.router)
     app.include_router(security_dashboard.router, prefix="/api/v1")
     app.include_router(pages.router)
@@ -7616,7 +8684,7 @@ class CommentSchema(BaseModel):
 <file path="app/schemas/auth.py">
 """Auth request/response schemas."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7670,6 +8738,22 @@ class ApiKeyResponse(BaseModel):
     key: str | None = None  # Only present on create
     permissions: list[str]
     created_at: str
+
+
+class CreateUserRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    username: Annotated[str, Field(min_length=3, max_length=64)]
+    password: Annotated[str, Field(min_length=12)]
+    role: Literal["admin", "senior_analyst", "analyst", "viewer"] = "analyst"
+    email: str | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    role: Literal["admin", "senior_analyst", "analyst", "viewer"] | None = None
+    is_active: bool | None = None
 </file>
 
 <file path="app/schemas/decision.py">
@@ -8896,10 +9980,61 @@ from app.models import AuditLog, User
 from app.security.auth import verify_token, blocklist_check
 from app.security.exceptions import SecurityError
 
+# Current role permissions map (for audit/documentation):
+# analyst: [
+#     "alerts:read",
+#     "alerts:write",
+#     "alerts:update_status",
+#     "alerts:comment",
+#     "incidents:read",
+#     "ingest:write",
+#     "mitre:read",
+#     "ai:generate",
+#     "dashboard:read",
+# ]
+# senior_analyst: [
+#     "alerts:read",
+#     "alerts:write",
+#     "alerts:update_status",
+#     "alerts:comment",
+#     "alerts:assign",
+#     "incidents:read",
+#     "mitre:read",
+#     "ai:generate",
+#     "dashboard:read",
+#     "decisions:read",
+#     "decisions:run",
+#     "playbooks:run",
+#     "sources:read",
+# ]
+# admin: [
+#     "alerts:read",
+#     "alerts:write",
+#     "alerts:update_status",
+#     "alerts:comment",
+#     "alerts:assign",
+#     "alerts:delete",
+#     "incidents:read",
+#     "ingest:write",
+#     "mitre:read",
+#     "ai:generate",
+#     "dashboard:read",
+#     "decisions:read",
+#     "decisions:run",
+#     "playbooks:run",
+#     "sources:read",
+#     "sources:manage",
+#     "users:manage",
+#     "admin:write",
+#     "audit:read",
+#     "system:config",
+# ]
+
 # Role hierarchy: each role has its own permissions (senior includes analyst conceptually in UI).
 PERMISSIONS: dict[str, list[str]] = {
     "analyst": [
         "alerts:read",
+        "alerts:write",
         "alerts:update_status",
         "alerts:comment",
         "incidents:read",
@@ -8910,6 +10045,7 @@ PERMISSIONS: dict[str, list[str]] = {
     ],
     "senior_analyst": [
         "alerts:read",
+        "alerts:write",
         "alerts:update_status",
         "alerts:comment",
         "alerts:assign",
@@ -8917,12 +10053,14 @@ PERMISSIONS: dict[str, list[str]] = {
         "mitre:read",
         "ai:generate",
         "dashboard:read",
+        "decisions:read",
         "decisions:run",
         "playbooks:run",
         "sources:read",
     ],
     "admin": [
         "alerts:read",
+        "alerts:write",
         "alerts:update_status",
         "alerts:comment",
         "alerts:assign",
@@ -8932,11 +10070,13 @@ PERMISSIONS: dict[str, list[str]] = {
         "mitre:read",
         "ai:generate",
         "dashboard:read",
+        "decisions:read",
         "decisions:run",
         "playbooks:run",
         "sources:read",
         "sources:manage",
         "users:manage",
+        "admin:write",
         "audit:read",
         "system:config",
     ],
@@ -10212,17 +11352,38 @@ interface MitreCoverageResponse {
 }
 
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  const [allAlerts, criticalOpen, highOpen, critTotal, highTotal, medTotal, lowTotal, incidentsRes, mitreRes, recentRes] = await Promise.all([
-    getAlerts({ limit: 1 }),
-    getAlerts({ severity: 'Critical', status: 'open', limit: 1 }),
-    getAlerts({ severity: 'High', status: 'open', limit: 1 }),
-    getAlerts({ severity: 'Critical', limit: 1 }),
-    getAlerts({ severity: 'High', limit: 1 }),
-    getAlerts({ severity: 'Medium', limit: 1 }),
-    getAlerts({ severity: 'Low', limit: 1 }),
-    get<IncidentsResponse>('/incidents').catch(() => ({ items: [], total: 0 })),
-    get<MitreCoverageResponse>('/mitre/coverage').catch(() => ({ summary: {} })),
-    getAlerts({ page: 1, limit: 10 }),
+  const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await fn()
+    } catch {
+      return fallback
+    }
+  }
+
+  const emptyAlerts = { alerts: [], total: 0, page: 1, limit: 1 }
+
+  const [
+    allAlerts,
+    criticalOpen,
+    highOpen,
+    critTotal,
+    highTotal,
+    medTotal,
+    lowTotal,
+    incidentsRes,
+    mitreRes,
+    recentRes,
+  ] = await Promise.all([
+    safe(() => getAlerts({ limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'Critical', status: 'open', limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'High', status: 'open', limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'Critical', limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'High', limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'Medium', limit: 1 }), emptyAlerts),
+    safe(() => getAlerts({ severity: 'Low', limit: 1 }), emptyAlerts),
+    safe(() => get<IncidentsResponse>('/incidents'), { items: [], total: 0 }),
+    safe(() => get<{ summary?: { coverage_percentage?: number } }>('/mitre/coverage'), { summary: {} }),
+    safe(() => getAlerts({ page: 1, limit: 10 }), emptyAlerts),
   ])
 
   const bySeverity: Record<string, number> = {
@@ -10232,24 +11393,38 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     Low: lowTotal.total,
   }
 
-  const volumeMap: Record<string, number> = {}
-  recentRes.alerts.forEach((a) => {
+  // Build 7-day timeline from all alerts, not just recent 10
+  // Generate last 7 dates as keys
+  const last7: Record<string, number> = {}
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    last7[d.toISOString().slice(0, 10)] = 0
+  }
+
+  // Count from recentRes (limit 10 is not enough for 7 days)
+  // Instead fetch more for timeline purposes
+  const timelineRes = await safe(
+    () => getAlerts({ page: 1, limit: 100 }),
+    emptyAlerts
+  )
+  timelineRes.alerts.forEach((a) => {
     const d = a.created_at?.slice(0, 10) || ''
-    if (d) volumeMap[d] = (volumeMap[d] || 0) + 1
+    if (d && d in last7) last7[d] = (last7[d] || 0) + 1
   })
-  const volume_timeline = Object.entries(volumeMap)
+
+  const volume_timeline = Object.entries(last7)
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date))
 
   const incidents = Array.isArray(incidentsRes.items) ? (incidentsRes.items as Incident[]) : []
-  incidents.sort((a, b) => (b.max_risk_score ?? 0) - (a.max_risk_score ?? 0))
 
   return {
     total_alerts: allAlerts.total,
     open_critical: criticalOpen.total,
     open_high: highOpen.total,
     incidents_count: incidentsRes.total,
-    coverage_pct: (mitreRes as MitreCoverageResponse).summary?.coverage_percentage ?? 0,
+    coverage_pct: (mitreRes as { summary?: { coverage_percentage?: number } })?.summary?.coverage_percentage ?? 0,
     alerts_by_severity: bySeverity,
     volume_timeline,
     recent_alerts: recentRes.alerts,
@@ -10282,11 +11457,11 @@ export async function fetchMitreCoverage(): Promise<MitreCoverageResponse> {
 
 <file path="frontend/src/App.tsx">
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/security/AuthContext'
 import { setUnauthorizedHandler } from '@/api/client'
-import { ProtectedRoute, SourcesRoute } from '@/security/ProtectedRoute'
+import { ProtectedRoute, SourcesRoute, AdminRoute } from '@/security/ProtectedRoute'
 import { SessionTimeoutModal } from '@/components/security/SessionTimeoutModal'
 import { Layout } from '@/components/layout/Layout'
 import { Dashboard } from '@/pages/Dashboard'
@@ -10296,6 +11471,9 @@ import { Incidents } from '@/pages/Incidents'
 import { IncidentDetail } from '@/pages/IncidentDetail'
 import { MitreCoverage } from '@/pages/MitreCoverage'
 import { Sources } from '@/pages/Sources'
+import { UserManagement } from '@/pages/UserManagement'
+import { Settings } from '@/pages/Settings'
+import { SetupWizard } from '@/pages/SetupWizard'
 import { Login } from '@/pages/Login'
 import { NotFound } from '@/pages/NotFound'
 
@@ -10317,9 +11495,29 @@ function AuthInterceptorSetup() {
   return null
 }
 
+function SetupCheck() {
+  const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
+
+  useEffect(() => {
+    if (isAuthenticated) return
+    fetch('/api/v1/auth/setup-status')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.setup_complete) {
+          navigate('/setup')
+        }
+      })
+      .catch(() => {})
+  }, [isAuthenticated, navigate])
+
+  return null
+}
+
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/setup" element={<SetupWizard />} />
       <Route path="/login" element={<Login />} />
       <Route
         path="/"
@@ -10343,6 +11541,22 @@ function AppRoutes() {
             </SourcesRoute>
           }
         />
+        <Route
+          path="settings"
+          element={
+            <AdminRoute>
+              <Settings />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="users"
+          element={
+            <AdminRoute>
+              <UserManagement />
+            </AdminRoute>
+          }
+        />
         <Route path="404" element={<NotFound />} />
         <Route path="*" element={<Navigate to="/404" replace />} />
       </Route>
@@ -10356,6 +11570,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <AuthInterceptorSetup />
+          <SetupCheck />
           <SessionTimeoutModal />
           <AppRoutes />
         </BrowserRouter>
@@ -10813,7 +12028,6 @@ export function MitreTags({ techniques, className }: MitreTagsProps) {
 import { useNavigate } from 'react-router-dom'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { AlertBadge } from '@/components/alerts/AlertBadge'
-import { MitreTags } from '@/components/alerts/MitreTags'
 import { formatRelativeTime } from '@/utils/time'
 import type { Alert } from '@/types/alert'
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '@/components/ui/Table'
@@ -10828,6 +12042,17 @@ interface RecentAlertsProps {
 export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
   const navigate = useNavigate()
 
+  const riskClass = (riskScore: number | null | undefined) => {
+    if (riskScore == null) return 'text-soc-muted'
+    if (riskScore >= 75) return 'text-red-400'
+    if (riskScore >= 50) return 'text-orange-400'
+    return 'text-blue-400'
+  }
+
+  const formatStatus = (status: Alert['status']) => {
+    return status.replace(/_/g, ' ')
+  }
+
   return (
     <Card>
       <CardHeader title="Recent alerts (last 10)" action={<a href="/alerts" className="text-sm text-blue-400 hover:underline">View all</a>} />
@@ -10841,20 +12066,32 @@ export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
         <Table>
           <TableHead>
             <TableRow>
-              <TableHeader>Severity</TableHeader>
               <TableHeader>Title</TableHeader>
+              <TableHeader>Severity</TableHeader>
               <TableHeader>Source</TableHeader>
-              <TableHeader>MITRE</TableHeader>
+              <TableHeader>Status</TableHeader>
+              <TableHeader>Risk Score</TableHeader>
               <TableHeader>Time</TableHeader>
             </TableRow>
           </TableHead>
           <TableBody>
             {alerts.slice(0, 10).map((alert) => (
-              <TableRow key={alert.id} onClick={() => navigate(`/alerts/${alert.id}`)} className="cursor-pointer hover:bg-soc-border/20">
-                <TableCell><AlertBadge severity={alert.severity} /></TableCell>
-                <TableCell className="font-medium max-w-[200px] truncate">{alert.title}</TableCell>
+              <TableRow
+                key={alert.id}
+                onClick={() => navigate(`/alerts/${alert.id}`)}
+                className="border-b border-soc-border hover:bg-soc-border/20 cursor-pointer transition-colors"
+              >
+                <TableCell className="font-medium max-w-[260px] truncate" title={alert.title}>
+                  {alert.title}
+                </TableCell>
+                <TableCell>
+                  <AlertBadge severity={alert.severity} />
+                </TableCell>
                 <TableCell className="text-soc-muted">{alert.source}</TableCell>
-                <TableCell>{alert.mitre_techniques?.length ? <MitreTags techniques={alert.mitre_techniques} /> : '—'}</TableCell>
+                <TableCell className="text-soc-muted capitalize">{formatStatus(alert.status)}</TableCell>
+                <TableCell className={riskClass(alert.risk_score)}>
+                  {alert.risk_score == null ? '—' : alert.risk_score}
+                </TableCell>
                 <TableCell className="text-soc-muted">{formatRelativeTime(alert.created_at)}</TableCell>
               </TableRow>
             ))}
@@ -10987,15 +12224,14 @@ export function SecurityStatusCard() {
 </file>
 
 <file path="frontend/src/components/dashboard/SeverityChart.tsx">
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
-import { Card, CardHeader } from '@/components/ui/Card'
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: '#ef4444',
-  high: '#f97316',
-  medium: '#eab308',
-  low: '#3b82f6',
-  info: '#22c55e',
+  Critical: '#ef4444',
+  High: '#f97316',
+  Medium: '#eab308',
+  Low: '#3b82f6',
+  Info: '#6b7280',
 }
 
 interface SeverityChartProps {
@@ -11003,50 +12239,62 @@ interface SeverityChartProps {
 }
 
 export function SeverityChart({ data }: SeverityChartProps) {
-  if (!data?.length) {
-    return (
-      <Card>
-        <CardHeader title="Alerts by severity" />
-        <div className="h-64 flex items-center justify-center text-soc-muted text-sm">No data</div>
-      </Card>
-    )
-  }
-
-  const chartData = data.map((d) => ({
-    ...d,
-    fill: SEVERITY_COLORS[d.name] ?? '#64748b',
-  }))
+  const filtered = data.filter((d) => d.value > 0)
 
   return (
-    <Card>
-      <CardHeader title="Alerts by severity" />
-      <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+    <div className="rounded-lg border border-soc-border bg-soc-surface p-4 h-full">
+      <h3 className="text-sm font-semibold text-soc-muted mb-2">
+        Alerts by Severity
+      </h3>
+      {filtered.length === 0 ? (
+        <div className="h-[280px] flex items-center justify-center text-soc-muted text-sm">
+          No alert data yet
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={280}>
+          <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <Pie
-              data={chartData}
-              dataKey="value"
-              nameKey="name"
+              data={filtered}
               cx="50%"
               cy="50%"
-              innerRadius={60}
-              outerRadius={80}
-              paddingAngle={2}
-              label={({ name, value }) => `${name}: ${value}`}
+              innerRadius={75}
+              outerRadius={110}
+              paddingAngle={3}
+              dataKey="value"
+              startAngle={90}
+              endAngle={-270}
             >
-              {chartData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.fill} />
+              {filtered.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={SEVERITY_COLORS[entry.name] ?? '#6b7280'}
+                  stroke="transparent"
+                />
               ))}
             </Pie>
             <Tooltip
-              contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '8px' }}
-              labelStyle={{ color: '#e2e8f0' }}
+              contentStyle={{
+                backgroundColor: '#1a1d27',
+                border: '1px solid #2a2d3a',
+                borderRadius: '8px',
+                color: '#e2e8f0',
+                fontSize: '12px',
+              }}
+              formatter={(value: number, name: string) => [value, name]}
             />
-            <Legend />
+            <Legend
+              verticalAlign="bottom"
+              height={36}
+              formatter={(value) => (
+                <span style={{ color: '#e2e8f0', fontSize: '12px' }}>
+                  {value}
+                </span>
+              )}
+            />
           </PieChart>
         </ResponsiveContainer>
-      </div>
-    </Card>
+      )}
+    </div>
   )
 }
 </file>
@@ -11122,14 +12370,14 @@ export function StatsRow({ stats }: StatsRowProps) {
         <Card key={label} className="flex items-center gap-4">
           <div className="p-2 rounded-lg bg-soc-border/50 shrink-0">{icon}</div>
           <div className="min-w-0 flex-1">
-            <p className={cn('text-2xl font-semibold', variantClasses[variant])}>
-              {value}
-              {pulse && (
-                <span
-                  className="ml-1.5 inline-block w-2 h-2 rounded-full bg-current animate-pulse"
-                  aria-hidden
-                />
+            <p
+              className={cn(
+                'text-2xl font-semibold',
+                variantClasses[variant],
+                pulse && 'animate-pulse'
               )}
+            >
+              {value}
             </p>
             <p className="text-sm text-soc-muted truncate">{label}</p>
           </div>
@@ -11216,8 +12464,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Card, CardHeader } from '@/components/ui/Card'
-import { formatDateTime } from '@/utils/time'
 
 interface VolumeChartProps {
   data: Array<{ time?: string; date?: string; count: number }>
@@ -11226,36 +12472,43 @@ interface VolumeChartProps {
 export function VolumeChart({ data }: VolumeChartProps) {
   if (!data?.length) {
     return (
-      <Card>
-        <CardHeader title="Alert volume" />
-        <div className="h-64 flex items-center justify-center text-soc-muted text-sm">No data</div>
-      </Card>
+      <div className="rounded-lg border border-soc-border bg-soc-surface p-4 h-full">
+        <h3 className="text-sm font-semibold text-soc-muted mb-2">
+          Alert Volume (7 days)
+        </h3>
+        <div className="h-[280px] flex items-center justify-center text-soc-muted text-sm">No data</div>
+      </div>
     )
   }
 
   const chartData = data.map((d) => ({
     ...d,
-    label: (d.time ?? d.date) ? formatDateTime(d.time ?? d.date!) : '',
+    label: d.date
+      ? new Date(`${d.date}T00:00:00`).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        })
+      : '',
   }))
 
   return (
-    <Card>
-      <CardHeader title="Alert volume" />
-      <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d3a" />
-            <XAxis dataKey="label" stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} />
-            <YAxis stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '8px' }}
-              labelStyle={{ color: '#e2e8f0' }}
-            />
-            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </Card>
+    <div className="rounded-lg border border-soc-border bg-soc-surface p-4 h-full">
+      <h3 className="text-sm font-semibold text-soc-muted mb-2">
+        Alert Volume (7 days)
+      </h3>
+      <ResponsiveContainer width="100%" height={280}>
+        <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2a2d3a" />
+          <XAxis dataKey="label" stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} />
+          <YAxis stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} />
+          <Tooltip
+            contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '8px' }}
+            labelStyle={{ color: '#e2e8f0' }}
+          />
+          <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 </file>
@@ -11409,9 +12662,12 @@ import {
   Target,
   Server,
   Shield,
+  Users,
   Github,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { useAuth } from '@/security/AuthContext'
 
 const PLATFORM_VERSION = '0.1.0'
 
@@ -11429,6 +12685,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ openAlertsCount = 0, openIncidentsCount = 0 }: SidebarProps) {
+  const { user } = useAuth()
+
   const getBadge = (key: string) => {
     if (key === 'alerts') return openAlertsCount
     if (key === 'incidents') return openIncidentsCount
@@ -11439,7 +12697,7 @@ export function Sidebar({ openAlertsCount = 0, openIncidentsCount = 0 }: Sidebar
     <aside className="w-56 shrink-0 border-r border-soc-border bg-soc-surface flex flex-col">
       <div className="p-4 border-b border-soc-border flex items-center gap-2">
         <Shield className="w-6 h-6 text-soc-low shrink-0" aria-hidden />
-        <h1 className="text-lg font-semibold text-soc-text truncate">SOC Platform</h1>
+        <h1 className="text-lg font-semibold text-soc-text truncate">KESTREL</h1>
       </div>
       <nav className="flex-1 p-2 space-y-0.5">
         {nav.map(({ to, label, icon: Icon, badgeKey }) => {
@@ -11473,6 +12731,38 @@ export function Sidebar({ openAlertsCount = 0, openIncidentsCount = 0 }: Sidebar
           )
         })}
       </nav>
+      {user?.role === 'admin' && (
+        <div className="mt-auto pt-4 border-t border-soc-border px-2 space-y-1">
+          <NavLink
+            to="/users"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                isActive
+                  ? 'bg-soc-border text-soc-text'
+                  : 'text-soc-muted hover:text-soc-text hover:bg-soc-border/50'
+              )
+            }
+          >
+            <Users className="w-4 h-4" aria-hidden />
+            <span className="flex-1 truncate">Users</span>
+          </NavLink>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                isActive
+                  ? 'bg-soc-border text-soc-text'
+                  : 'text-soc-muted hover:text-soc-text hover:bg-soc-border/50'
+              )
+            }
+          >
+            <SettingsIcon className="w-4 h-4" aria-hidden />
+            <span className="flex-1 truncate">Settings</span>
+          </NavLink>
+        </div>
+      )}
       <div className="p-2 border-t border-soc-border">
         <div className="px-3 py-2 text-xs text-soc-muted">
           v{PLATFORM_VERSION}
@@ -11543,11 +12833,6 @@ export function TopBar({
         )}
       </div>
       <div className="flex items-center gap-4">
-        {user && (
-          <span className="text-sm text-soc-muted truncate max-w-[120px]" title={user.username}>
-            {user.username}
-          </span>
-        )}
         <button
           type="button"
           onClick={handleRefresh}
@@ -11567,14 +12852,27 @@ export function TopBar({
         >
           <Bell className="w-5 h-5" />
         </button>
-        <button
-          type="button"
-          onClick={logout}
-          className="p-2 rounded-lg hover:bg-soc-border/50 text-soc-muted hover:text-soc-text transition-colors"
-          aria-label="Sign out"
-        >
-          <LogOut className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="text-right hidden sm:block">
+            <p className="text-sm font-medium text-soc-text">
+              {user?.username ?? 'Unknown'}
+            </p>
+            <p className="text-xs text-soc-muted capitalize">
+              {user?.role?.replace('_', ' ') ?? 'viewer'}
+            </p>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-semibold">
+            {(user?.username ?? 'U')[0].toUpperCase()}
+          </div>
+          <button
+            type="button"
+            onClick={logout}
+            title="Sign out"
+            className="p-1.5 rounded-lg text-soc-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </header>
   )
@@ -12157,7 +13455,7 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAlert } from '@/hooks/useAlerts'
 import { useQuery } from '@tanstack/react-query'
-import { triggerAI, getTimeline, updateAlertStatus } from '@/api/alerts'
+import { triggerAI, getTimeline, updateAlertStatus, addComment } from '@/api/alerts'
 import { Card } from '@/components/ui/Card'
 import { AlertBadge } from '@/components/alerts/AlertBadge'
 import { MitreTags } from '@/components/alerts/MitreTags'
@@ -12198,6 +13496,9 @@ export function AlertDetail() {
   const [tab, setTab] = useState<TabId>('overview')
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [comment, setComment] = useState('')
+  const [commentLoading, setCommentLoading] = useState(false)
 
   const { data: alert, isLoading, isError, refetch } = useAlert(id)
 
@@ -12223,9 +13524,12 @@ export function AlertDetail() {
   const handleRunAI = async () => {
     if (!id) return
     setAiLoading(true)
+    setAiError('')
     try {
       await triggerAI(id)
-      refetch()
+      await refetch()
+    } catch (e) {
+      setAiError('AI analysis failed. Check Settings to configure an AI provider.')
     } finally {
       setAiLoading(false)
     }
@@ -12234,6 +13538,18 @@ export function AlertDetail() {
   const handleCopyRaw = () => {
     if (alert.raw) {
       navigator.clipboard.writeText(JSON.stringify(alert.raw, null, 2))
+    }
+  }
+
+  const handleAddComment = async () => {
+    if (!id || !comment.trim()) return
+    setCommentLoading(true)
+    try {
+      await addComment(id, comment.trim())
+      setComment('')
+      refetch()
+    } finally {
+      setCommentLoading(false)
     }
   }
 
@@ -12356,35 +13672,124 @@ export function AlertDetail() {
 
         {tab === 'ai' && (
           <div className="space-y-4">
-            {aiLoading && <div className="flex items-center gap-2 text-soc-muted"><Spinner size="sm" /> Generating…</div>}
-            <blockquote className="border-l-4 border-soc-border pl-4 py-2 text-soc-text italic">
-              {alert.ai_summary || 'No AI summary yet. Click "Run AI Analysis" to generate.'}
-            </blockquote>
-            {alert.ai_key_facts?.length ? (
-              <>
-                <h4 className="text-xs font-semibold text-soc-muted uppercase">Key facts</h4>
-                <ul className="space-y-1">
-                  {alert.ai_key_facts.map((f, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm text-soc-text"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" /> {f}</li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            {alert.ai_remediation?.length ? (
-              <>
-                <h4 className="text-xs font-semibold text-soc-muted uppercase mt-4">Remediation</h4>
-                <ol className="list-decimal list-inside text-sm text-soc-text space-y-1">
-                  {alert.ai_remediation.map((r, i) => <li key={i}>{r}</li>)}
-                </ol>
-              </>
-            ) : null}
-            {alert.ai_next_steps?.length ? (
-              <>
-                <h4 className="text-xs font-semibold text-soc-muted uppercase mt-4">Next steps</h4>
-                <ul className="text-sm text-soc-text space-y-1">{alert.ai_next_steps.map((s, i) => <li key={i}>• {s}</li>)}</ul>
-              </>
-            ) : null}
-            <button type="button" onClick={handleRunAI} disabled={aiLoading} className="mt-4 px-3 py-1.5 rounded border border-soc-border text-soc-muted hover:text-soc-text text-sm">Regenerate</button>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-soc-text">
+                AI Triage Analysis
+              </h3>
+              <button
+                type="button"
+                onClick={handleRunAI}
+                disabled={aiLoading}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-text hover:bg-soc-border/30 disabled:opacity-50 text-sm"
+              >
+                {aiLoading ? <Spinner size="sm" /> : <Sparkles className="w-4 h-4 text-yellow-400" />}
+                {alert.ai_summary ? 'Re-run Analysis' : 'Run AI Analysis'}
+              </button>
+            </div>
+
+            {aiError && (
+              <p className="text-red-400 text-sm p-2 rounded bg-red-500/10 border border-red-500/20">
+                {aiError}
+                <a href="/settings" className="ml-2 text-blue-400 underline">
+                  Configure AI →
+                </a>
+              </p>
+            )}
+
+            {!alert.ai_summary && !aiLoading && (
+              <div className="rounded-lg border border-soc-border bg-soc-surface/50 p-6 text-center">
+                <Sparkles className="w-8 h-8 text-soc-muted mx-auto mb-2" />
+                <p className="text-soc-muted text-sm">
+                  No AI analysis yet. Click "Run AI Analysis" to generate triage.
+                </p>
+              </div>
+            )}
+
+            {aiLoading && (
+              <div className="rounded-lg border border-soc-border bg-soc-surface/50 p-6 text-center">
+                <Spinner size="md" />
+                <p className="text-soc-muted text-sm mt-2">Analyzing alert...</p>
+              </div>
+            )}
+
+            {alert.ai_summary && !aiLoading && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
+                  <h4 className="text-xs font-semibold text-soc-muted uppercase tracking-wide mb-2">
+                    Summary
+                  </h4>
+                  <p className="text-soc-text text-sm leading-relaxed whitespace-pre-wrap">
+                    {alert.ai_summary}
+                  </p>
+                </div>
+
+                {alert.ai_summary?.startsWith('Summary for alert:') && (
+                  <p className="text-xs text-amber-400 mt-2">
+                    ⚠ Showing rule-based summary. Add an OpenAI key in{' '}
+                    <a href="/settings" className="underline">
+                      Settings
+                    </a>{' '}
+                    for full AI analysis.
+                  </p>
+                )}
+
+                {alert.ai_key_facts && Object.keys(alert.ai_key_facts as Record<string, unknown>).length > 0 && (
+                  <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
+                    <h4 className="text-xs font-semibold text-soc-muted uppercase tracking-wide mb-2">
+                      Key Facts
+                    </h4>
+                    <dl className="grid grid-cols-2 gap-2">
+                      {Object.entries(alert.ai_key_facts as Record<string, unknown>).map(([k, v]) => (
+                        <div key={k}>
+                          <dt className="text-xs text-soc-muted capitalize">{k}</dt>
+                          <dd className="text-sm text-soc-text">{String(v)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+
+                {alert.ai_remediation && (
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+                    <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-2">
+                      Remediation
+                    </h4>
+                    {Array.isArray((alert.ai_remediation as { actions?: string[] })?.actions) ? (
+                      <ul className="space-y-1">
+                        {((alert.ai_remediation as { actions: string[] }).actions).map((a, i) => (
+                          <li key={i} className="text-sm text-soc-text flex gap-2">
+                            <span className="text-amber-400 shrink-0">→</span>
+                            {a}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-soc-text">{JSON.stringify(alert.ai_remediation)}</p>
+                    )}
+                  </div>
+                )}
+
+                {alert.ai_next_steps && (
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+                    <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wide mb-2">
+                      Next Steps
+                    </h4>
+                    {Array.isArray((alert.ai_next_steps as { recommendations?: string[] })?.recommendations) ? (
+                      <ul className="space-y-1">
+                        {((alert.ai_next_steps as { recommendations: string[] }).recommendations).map((r, i) => (
+                          <li key={i} className="text-sm text-soc-text flex gap-2">
+                            <span className="text-blue-400 shrink-0">{i + 1}.</span>
+                            {r}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-soc-text">{JSON.stringify(alert.ai_next_steps)}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -12441,7 +13846,15 @@ export function AlertDetail() {
           </div>
         )}
 
-        {tab === 'timeline' && id && <TimelineTab alertId={id} />}
+        {tab === 'timeline' && id && (
+          <TimelineTab
+            alertId={id}
+            comment={comment}
+            setComment={setComment}
+            commentLoading={commentLoading}
+            onAddComment={handleAddComment}
+          />
+        )}
 
         {tab === 'raw' && (
           <div>
@@ -12458,7 +13871,19 @@ export function AlertDetail() {
   )
 }
 
-function TimelineTab({ alertId }: { alertId: string }) {
+function TimelineTab({
+  alertId,
+  comment,
+  setComment,
+  commentLoading,
+  onAddComment,
+}: {
+  alertId: string
+  comment: string
+  setComment: (value: string) => void
+  commentLoading: boolean
+  onAddComment: () => void
+}) {
   const { data, isLoading } = useQuery({
     queryKey: ['alert', 'timeline', alertId],
     queryFn: () => getTimeline(alertId),
@@ -12478,13 +13903,36 @@ function TimelineTab({ alertId }: { alertId: string }) {
         </div>
       ))}
       {timeline.length === 0 && <p className="text-soc-muted text-sm">No timeline events.</p>}
+      <div className="mt-4 border-t border-soc-border pt-4">
+        <p className="text-xs text-soc-muted mb-2">Add note</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onAddComment()}
+            placeholder="Investigation note..."
+            className="flex-1 px-3 py-1.5 rounded border border-soc-border 
+                   bg-soc-bg text-soc-text text-sm focus:outline-none 
+                   focus:border-blue-500"
+          />
+          <button
+            onClick={onAddComment}
+            disabled={commentLoading || !comment.trim()}
+            className="px-3 py-1.5 rounded bg-blue-600 text-white 
+                   text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {commentLoading ? '...' : 'Add'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 </file>
 
 <file path="frontend/src/pages/Alerts.tsx">
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAlerts } from '@/hooks/useAlerts'
 import { AlertTable } from '@/components/alerts/AlertTable'
@@ -12530,6 +13978,26 @@ export function Alerts() {
     setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
   }, [])
 
+  const sortedAlerts = useMemo(() => {
+    const items = [...(data?.alerts ?? [])]
+    return items.sort((a, b) => {
+      if (sortKey === 'severity') {
+        const order = { Critical: 0, High: 1, Medium: 2, Low: 3 }
+        const aVal = order[a.severity as keyof typeof order] ?? 4
+        const bVal = order[b.severity as keyof typeof order] ?? 4
+        return sortDir === 'asc' ? aVal - bVal : bVal - aVal
+      }
+      if (sortKey === 'risk_score') {
+        const aVal = a.risk_score ?? 0
+        const bVal = b.risk_score ?? 0
+        return sortDir === 'asc' ? aVal - bVal : bVal - aVal
+      }
+      const aDate = a.created_at ?? ''
+      const bDate = b.created_at ?? ''
+      return sortDir === 'asc' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate)
+    })
+  }, [data?.alerts, sortKey, sortDir])
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -12543,7 +14011,7 @@ export function Alerts() {
         search={search}
       />
       <AlertTable
-        alerts={data?.alerts ?? []}
+        alerts={sortedAlerts}
         total={data?.total ?? 0}
         loading={isLoading}
         page={page}
@@ -12567,10 +14035,15 @@ import { RecentAlerts } from '@/components/dashboard/RecentAlerts'
 import { TopIncidents } from '@/components/dashboard/TopIncidents'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { SpinnerOverlay } from '@/components/ui/Spinner'
-import { AlertTriangle, Flame, Shield } from 'lucide-react'
+import { AlertTriangle, Flame, Shield, RefreshCw } from 'lucide-react'
 
 export function Dashboard() {
-  const { data: stats, isLoading, isError, refetch } = useDashboardStats(30_000)
+  const {
+    data: stats,
+    isLoading,
+    isError,
+    refetch,
+  } = useDashboardStats(30_000)
 
   if (isError) {
     return <ErrorState title="Failed to load dashboard" onRetry={() => refetch()} />
@@ -12592,18 +14065,35 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-soc-text">Dashboard</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-soc-text">
+          Dashboard
+        </h1>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-muted hover:text-soc-text text-sm"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </button>
+      </div>
       <StatsRow stats={statItems} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <SeverityChart data={severityData} />
         <VolumeChart data={stats?.volume_timeline ?? []} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RecentAlerts alerts={stats?.recent_alerts ?? []} loading={isLoading} />
-        <TopIncidents incidents={stats?.incidents ?? []} loading={isLoading} />
-      </div>
+      <RecentAlerts
+        alerts={stats?.recent_alerts ?? []}
+        loading={isLoading}
+      />
+
+      <TopIncidents
+        incidents={stats?.incidents ?? []}
+        loading={isLoading}
+      />
     </div>
   )
 }
@@ -12829,8 +14319,8 @@ export function Login() {
         onSubmit={handleSubmit}
         className="w-full max-w-sm p-6 rounded-lg border border-soc-border bg-soc-surface shadow"
       >
-        <h1 className="text-xl font-semibold text-soc-text mb-1">SOC Platform</h1>
-        <p className="text-sm text-soc-muted mb-4">Sign in to continue</p>
+        <h1 className="text-xl font-semibold text-soc-text mb-1">KESTREL</h1>
+        <p className="text-sm text-soc-muted mb-4">AI-assisted threat detection</p>
         {error && (
           <p
             className="text-sm text-red-400 mb-3 p-2 rounded bg-red-500/10 border border-red-500/20"
@@ -12876,6 +14366,20 @@ import { useMitreCoverage } from '@/hooks/useMitre'
 import { CoverageHeatmap } from '@/components/mitre/CoverageHeatmap'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { SpinnerOverlay } from '@/components/ui/Spinner'
+
+const HIGH_PRIORITY_TECHNIQUES = [
+  { id: 'T1078', name: 'Valid Accounts', tactic: 'Initial Access' },
+  { id: 'T1110', name: 'Brute Force', tactic: 'Credential Access' },
+  { id: 'T1003', name: 'Credential Dumping', tactic: 'Credential Access' },
+  { id: 'T1059', name: 'Command and Scripting', tactic: 'Execution' },
+  { id: 'T1053', name: 'Scheduled Task', tactic: 'Persistence' },
+  { id: 'T1055', name: 'Process Injection', tactic: 'Defense Evasion' },
+  { id: 'T1071', name: 'Application Layer Protocol', tactic: 'C2' },
+  { id: 'T1486', name: 'Data Encrypted for Impact', tactic: 'Impact' },
+  { id: 'T1190', name: 'Exploit Public Application', tactic: 'Initial Access' },
+  { id: 'T1133', name: 'External Remote Services', tactic: 'Initial Access' },
+]
+
 export function MitreCoverage() {
   const [selectedTechnique, setSelectedTechnique] = useState<{ id: string; name: string; alert_count?: number } | null>(null)
 
@@ -12891,6 +14395,15 @@ export function MitreCoverage() {
   const totalTechniques = summary.total_techniques ?? techniques.length
   const tacticsCovered = summary.tactics_covered ?? new Set(techniques.filter((t) => (t.alert_count ?? 0) > 0).map((t) => t.tactic_id)).size
   const coveragePct = summary.coverage_percentage ?? (totalTechniques ? Math.round((techniquesDetected / totalTechniques) * 1000) / 10 : 0)
+
+  const detectedIds = new Set(
+    techniques
+      .filter((t) => (t.alert_count ?? 0) > 0)
+      .map((t) => t.id)
+  )
+  const gaps = HIGH_PRIORITY_TECHNIQUES.filter(
+    (t) => !detectedIds.has(t.id)
+  )
 
   return (
     <div className="space-y-6">
@@ -12911,6 +14424,36 @@ export function MitreCoverage() {
         techniques={techniques}
         onTechniqueClick={(t) => setSelectedTechnique(t)}
       />
+
+      <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
+        <h2 className="text-sm font-semibold text-soc-text mb-1">
+          Detection Gaps
+        </h2>
+        <p className="text-xs text-soc-muted mb-4">
+          High-priority techniques with no current detections
+        </p>
+        {gaps.length === 0 ? (
+          <p className="text-green-400 text-sm">
+            All high-priority techniques covered ✓
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {gaps.map((t) => (
+              <div
+                key={t.id}
+                className="rounded border border-red-500/20 bg-red-500/5 p-3"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-mono text-red-400">{t.id}</span>
+                  <span className="text-xs text-soc-muted">{t.tactic}</span>
+                </div>
+                <p className="text-sm text-soc-text">{t.name}</p>
+                <p className="text-xs text-red-400 mt-1">No detections</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {selectedTechnique && (
         <div className="fixed inset-y-0 right-0 w-full max-w-md bg-soc-surface border-l border-soc-border shadow-xl z-50 overflow-auto">
@@ -12955,56 +14498,360 @@ export function NotFound() {
 <file path="frontend/src/pages/Sources.tsx">
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/api/client'
-import { Card } from '@/components/ui/Card'
 import { SpinnerOverlay } from '@/components/ui/Spinner'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 
 interface Source {
   id: string
   name: string
   type: string
-  enabled?: boolean
+  status: 'connected' | 'not_configured' | 'push_ready'
+  description: string
+  push: boolean
+}
+
+const STATUS_CONFIG = {
+  connected: {
+    label: 'Connected',
+    dot: 'bg-green-400 animate-pulse',
+    text: 'text-green-400',
+    border: 'border-green-500/20',
+    bg: 'bg-green-500/5',
+  },
+  not_configured: {
+    label: 'Not Configured',
+    dot: 'bg-gray-500',
+    text: 'text-soc-muted',
+    border: 'border-soc-border',
+    bg: 'bg-soc-surface',
+  },
+  push_ready: {
+    label: 'Push Ready',
+    dot: 'bg-blue-400',
+    text: 'text-blue-400',
+    border: 'border-blue-500/20',
+    bg: 'bg-blue-500/5',
+  },
+}
+
+const TYPE_COLORS: Record<string, string> = {
+  SIEM: 'bg-purple-500/10 text-purple-400',
+  Cloud: 'bg-orange-500/10 text-orange-400',
+  Enrichment: 'bg-teal-500/10 text-teal-400',
+  'IDS/IPS': 'bg-red-500/10 text-red-400',
+  OS: 'bg-blue-500/10 text-blue-400',
+  EDR: 'bg-yellow-500/10 text-yellow-400',
 }
 
 export function Sources() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['sources'],
-    queryFn: () => get<{ items: Source[] }>('/sources'),
+    queryFn: () => get<{ items: Source[]; configured_count: number }>('/sources'),
   })
 
   if (isError) return <ErrorState title="Failed to load sources" onRetry={() => refetch()} />
   if (isLoading) return <SpinnerOverlay />
 
   const items = data?.items ?? []
+  const configured = data?.configured_count ?? 0
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-soc-text">Connected Sources</h1>
-      {items.length === 0 ? (
-        <EmptyState
-          title="No sources configured"
-          description="Add log sources (Sentinel, Suricata, GuardDuty, etc.) to start ingesting alerts."
-        />
-      ) : (
-        <div className="grid gap-4">
-          {items.map((source) => (
-            <Card key={source.id}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium text-soc-text">{source.name}</h3>
-                  <p className="text-sm text-soc-muted">{source.type}</p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-soc-text">
+          Connected Sources
+        </h1>
+        <a
+          href="/settings"
+          className="text-sm text-blue-400 hover:underline"
+        >
+          Configure in Settings →
+        </a>
+      </div>
+
+      <div className="p-4 rounded-lg border border-soc-border bg-soc-surface">
+        <p className="text-sm text-soc-muted">
+          <span className="text-soc-text font-semibold">{configured}</span>
+          {' '}of{' '}
+          <span className="text-soc-text font-semibold">4</span>
+          {' '}pull sources configured
+          {' · '}
+          <span className="text-blue-400">
+            {items.filter((s) => s.push).length} push sources ready
+          </span>
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {items.map((source) => {
+          const cfg = STATUS_CONFIG[source.status]
+          return (
+            <div
+              key={source.id}
+              className={`rounded-lg border p-4 ${cfg.border} ${cfg.bg}`}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                  <h3 className="text-sm font-semibold text-soc-text">
+                    {source.name}
+                  </h3>
                 </div>
-                {source.enabled != null && (
-                  <span className={source.enabled ? 'text-safe text-sm' : 'text-soc-muted text-sm'}>
-                    {source.enabled ? 'Enabled' : 'Disabled'}
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full 
+                    ${TYPE_COLORS[source.type] ?? 'bg-soc-border text-soc-muted'}`}
+                  >
+                    {source.type}
                   </span>
-                )}
+                  <span className={`text-xs ${cfg.text}`}>
+                    {cfg.label}
+                  </span>
+                </div>
               </div>
-            </Card>
-          ))}
+              <p className="text-xs text-soc-muted">{source.description}</p>
+              {source.status === 'not_configured' && (
+                <a
+                  href="/settings#sources"
+                  className="text-xs text-blue-400 hover:underline mt-2 inline-block"
+                >
+                  Configure →
+                </a>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/pages/UserManagement.tsx">
+import { useEffect, useMemo, useState } from 'react'
+import { useAuth } from '@/security/AuthContext'
+
+type UserRow = {
+  id: string | number
+  username: string
+  email?: string | null
+  role: 'admin' | 'senior_analyst' | 'analyst' | 'viewer'
+  is_active: boolean
+  created_at?: string | null
+}
+
+export function UserManagement() {
+  const { user } = useAuth()
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    role: 'analyst',
+    email: '',
+  })
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [busyId, setBusyId] = useState<string | number | null>(null)
+
+  const authHeader = useMemo(() => {
+    const token = sessionStorage.getItem('kestrel_token')
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }, [])
+
+  useEffect(() => {
+    fetchUsers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const fetchUsers = async () => {
+    setError('')
+    setSuccess('')
+    const res = await fetch('/api/v1/auth/users', {
+      headers: {
+        ...authHeader,
+      },
+    })
+    const data = await res.json()
+    setUsers((data?.users ?? []) as UserRow[])
+  }
+
+  const createUser = async () => {
+    setError('')
+    setSuccess('')
+    const res = await fetch('/api/v1/auth/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeader,
+      },
+      body: JSON.stringify(form),
+    })
+    if (res.ok) {
+      setSuccess('User created successfully')
+      setShowForm(false)
+      setForm({ username: '', password: '', role: 'analyst', email: '' })
+      await fetchUsers()
+    } else {
+      const d = await res.json().catch(() => ({}))
+      setError(d?.detail ?? 'Failed to create user')
+    }
+  }
+
+  const updateUser = async (id: string | number, patch: { role?: string; is_active?: boolean }) => {
+    setError('')
+    setSuccess('')
+    setBusyId(id)
+    try {
+      const res = await fetch(`/api/v1/auth/users/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeader,
+        },
+        body: JSON.stringify(patch),
+      })
+      if (res.ok) {
+        setSuccess('User updated')
+        await fetchUsers()
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setError(d?.detail ?? 'Failed to update user')
+      }
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (!user || user.role !== 'admin') return null
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-soc-text">
+          User Management
+        </h1>
+        <button
+          onClick={() => setShowForm(true)}
+          className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
+        >
+          + Create User
+        </button>
+      </div>
+
+      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {success && <p className="text-green-400 text-sm">{success}</p>}
+
+      {showForm && (
+        <div className="rounded-lg border border-soc-border bg-soc-surface p-4 space-y-3 max-w-md">
+          <h2 className="text-sm font-semibold text-soc-text">
+            New User
+          </h2>
+          <input
+            placeholder="Username"
+            value={form.username}
+            onChange={(e) => setForm({ ...form, username: e.target.value })}
+            className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+          />
+          <input
+            type="password"
+            placeholder="Password (min 12 chars)"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+          />
+          <select
+            value={form.role}
+            onChange={(e) => setForm({ ...form, role: e.target.value })}
+            className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+          >
+            <option value="viewer">Viewer</option>
+            <option value="analyst">Analyst</option>
+            <option value="senior_analyst">Senior Analyst</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input
+            placeholder="Email (optional)"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={createUser}
+              className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
+            >
+              Create
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="px-3 py-1.5 rounded border border-soc-border text-soc-muted text-sm"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
+
+      <div className="rounded-lg border border-soc-border bg-soc-surface overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-soc-border">
+              <th className="text-left px-4 py-3 text-soc-muted">Username</th>
+              <th className="text-left px-4 py-3 text-soc-muted">Role</th>
+              <th className="text-left px-4 py-3 text-soc-muted">Status</th>
+              <th className="text-left px-4 py-3 text-soc-muted">Created</th>
+              <th className="text-left px-4 py-3 text-soc-muted">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr
+                key={u.id}
+                className="border-b border-soc-border/50 hover:bg-soc-border/20"
+              >
+                <td className="px-4 py-3 text-soc-text">{u.username}</td>
+                <td className="px-4 py-3">
+                  <span className="px-2 py-0.5 rounded text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
+                    {u.role?.replace('_', ' ')}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={u.is_active ? 'text-green-400 text-xs' : 'text-red-400 text-xs'}>
+                    {u.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-soc-muted text-xs">
+                  {u.created_at?.slice(0, 10) ?? '-'}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2 items-center">
+                    <select
+                      value={u.role}
+                      onChange={(e) => updateUser(u.id, { role: e.target.value })}
+                      disabled={busyId === u.id}
+                      className="px-2 py-1 rounded border border-soc-border bg-soc-bg text-soc-text text-xs"
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="analyst">Analyst</option>
+                      <option value="senior_analyst">Senior Analyst</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => updateUser(u.id, { is_active: !u.is_active })}
+                      disabled={busyId === u.id}
+                      className="px-2 py-1 rounded border border-soc-border text-soc-muted hover:text-soc-text text-xs"
+                    >
+                      {u.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -13052,6 +14899,8 @@ interface AuthContextValue extends AuthState {
   logout: () => void
   dismissSessionWarning: () => void
   setSessionWarning: (value: boolean) => void
+  /** True when we've checked sessionStorage and initial auth state. */
+  hydrated: boolean
 }
 
 const defaultState: AuthState = {
@@ -13087,14 +14936,24 @@ function parseUserFromToken(token: string): User | null {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(defaultState)
+  const [hydrated, setHydrated] = useState(false)
 
   const logout = useCallback(() => {
     clearToken()
-    setState(defaultState)
+    sessionStorage.removeItem('kestrel_token')
+    sessionStorage.removeItem('kestrel_user')
+    setState({
+      token: null,
+      user: null,
+      isAuthenticated: false,
+      sessionWarning: false,
+    })
   }, [])
 
   const login = useCallback((token: string, user: User) => {
     setClientToken(token)
+    sessionStorage.setItem('kestrel_token', token)
+    sessionStorage.setItem('kestrel_user', JSON.stringify(user))
     setState({
       token,
       user,
@@ -13111,25 +14970,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, sessionWarning: value }))
   }, [])
 
-  // Restore token from memory on mount (e.g. after refresh we lose it — user must re-login).
-  // Optional: if backend sets token in httpOnly cookie, we might only need user from an /me endpoint.
+  // Restore session from sessionStorage on mount if token is still valid.
   useEffect(() => {
-    const token = getToken()
-    if (token) {
-      const exp = getJwtExpiry(token)
-      if (exp != null && exp * 1000 < Date.now()) {
-        logout()
+    const savedToken = sessionStorage.getItem('kestrel_token')
+    const savedUser = sessionStorage.getItem('kestrel_user')
+    if (!savedToken || !savedUser) {
+      setHydrated(true)
+      return
+    }
+    try {
+      const user = JSON.parse(savedUser) as User
+      const payloadPart = savedToken.split('.')[1]
+      if (!payloadPart) {
+        sessionStorage.removeItem('kestrel_token')
+        sessionStorage.removeItem('kestrel_user')
+        setHydrated(true)
         return
       }
-      const user = parseUserFromToken(token)
-      setState((s) => ({
-        ...s,
-        token,
-        user,
-        isAuthenticated: true,
-      }))
+      const payload = JSON.parse(atob(payloadPart)) as { exp?: number }
+      const exp = payload.exp ?? 0
+      if (exp * 1000 > Date.now()) {
+        setClientToken(savedToken)
+        setState({
+          token: savedToken,
+          user,
+          isAuthenticated: true,
+          sessionWarning: false,
+        })
+      } else {
+        sessionStorage.removeItem('kestrel_token')
+        sessionStorage.removeItem('kestrel_user')
+      }
+    } catch {
+      sessionStorage.removeItem('kestrel_token')
+      sessionStorage.removeItem('kestrel_user')
+    } finally {
+      setHydrated(true)
     }
-  }, [logout])
+  }, [])
 
   // Session expiry check: warn 2 min before, logout on expiry.
   useEffect(() => {
@@ -13154,8 +15032,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       dismissSessionWarning,
       setSessionWarning,
+      hydrated,
     }),
-    [state, login, logout, dismissSessionWarning, setSessionWarning]
+    [state, login, logout, dismissSessionWarning, setSessionWarning, hydrated]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
@@ -13262,8 +15141,13 @@ export interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, allowedRoles = [] }: ProtectedRouteProps) {
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated, user, hydrated } = useAuth()
   const location = useLocation()
+
+  // Wait until AuthProvider has checked sessionStorage before deciding.
+  if (!hydrated) {
+    return null
+  }
 
   if (!isAuthenticated || !user) {
     if (typeof window !== 'undefined') {
@@ -14538,64 +16422,369 @@ asyncio_mode = "auto"
 </file>
 
 <file path="README.md">
-# SOC Platform
+# KESTREL
+> AI-assisted SOC triage and detection platform
 
-AI-assisted SOC log aggregation and incident triage platform.
+Named after the kestrel — the only bird of prey that hovers perfectly still while locking onto its target.
 
-## Requirements
+---
+
+## What Is KESTREL
+
+KESTREL is an open-source AI-assisted SOC platform that:
+- Ingests security logs from multiple sources
+- Maps alerts to MITRE ATT&CK techniques automatically  
+- Runs a decision engine for risk scoring and correlation
+- Uses LLM-powered AI to triage and summarize alerts
+- Provides a React dashboard for analyst workflows
+
+---
+
+## Architecture
+
+- **Backend**: FastAPI + SQLAlchemy async + SQLite/PostgreSQL  
+- **Frontend**: React + Vite + TailwindCSS + Recharts  
+- **Auth**: JWT RS256 + argon2 password hashing + RBAC  
+- **AI**: OpenAI GPT-4o-mini / Anthropic Claude / Azure OpenAI (configurable)
+
+---
+
+## Quick Start
+
+### Prerequisites
 
 - Python 3.11+
-- See `requirements.txt` for dependencies
+- Node.js 18+
+- Git
 
-## Setup
+### 1. Clone and setup
 
-1. Clone and create a virtual environment:
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate   # Windows
-   ```
+```bash
+git clone https://github.com/yourname/kestrel
+cd kestrel
+python -m venv .venv
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Windows
+.venv\Scripts\activate
 
-3. Copy `.env.example` to `.env` and configure:
-   ```bash
-   copy .env.example .env
-   ```
+# Mac/Linux
+source .venv/bin/activate
 
-4. Run migrations:
-   ```bash
-   alembic upgrade head
-   ```
+pip install -r requirements/base.txt
+```
 
-5. Start the API:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+### 2. Configure environment
 
-API docs: http://localhost:8000/docs
+```bash
+cp .env.example .env   # or: copy .env.example .env on Windows
+```
 
-## Project structure
+Edit `.env` and set at minimum:
 
-- `app/` — FastAPI application, API routes, core logic, connectors, enrichment, playbooks, AI
-- `ingestors/` — Standalone ingestors (Windows Event Log, Suricata, CloudTrail, Syslog)
-- `frontend/` — Static assets and Jinja2 templates
-- `tests/` — Pytest tests
-- `scripts/` — Seed data, sample alerts, test ingest, security_check
-- `docker/` — Dockerfile and docker-compose
+```env
+SECRET_KEY=your-random-secret-key-here
+DATABASE_URL=sqlite:///./kestrel.db
+```
 
-## Security
+For production, you should use PostgreSQL (and enable SSL):
 
-- **Secrets**: Sensitive config (e.g. `SECRET_KEY`, `DATABASE_URL`, API keys) use `SecretStr`; never logged.
-- **Production**: Set `ENVIRONMENT=production` or `PRODUCTION=1`. In production: DEBUG must be False; SECRET_KEY must be ≥32 chars with high entropy; SQLite is rejected (use PostgreSQL with SSL).
-- **TLS**: Use minimum TLS 1.2, prefer 1.3; strong cipher suites only. Submit your domain to the [HSTS preload list](https://hstspreload.org/) when using HTTPS in production.
-- **Dependency scans**: Run `python scripts/security_check.py` (pip-audit, safety, bandit). CI runs security scans on push/PR.
+```env
+DATABASE_URL=postgresql+psycopg2://user:password@host:5432/kestrel
+```
+
+### 3. Setup AI provider (choose one)
+
+By default KESTREL will fall back to rule-based summaries if no AI key is configured.
+
+#### OpenAI (recommended)
+
+```env
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-your-openai-api-key
+```
+
+#### Anthropic Claude
+
+```env
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-your-key
+```
+
+#### Azure OpenAI
+
+```env
+AI_PROVIDER=azure
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+```
+
+### 4. Setup log source integrations (optional)
+
+#### Microsoft Sentinel
+
+```env
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-app-client-id
+AZURE_CLIENT_SECRET=your-client-secret
+LOGANALYTICS_WORKSPACE_ID=your-workspace-id
+```
+
+#### AWS GuardDuty
+
+```env
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
+```
+
+#### Threat Intelligence
+
+```env
+VIRUSTOTAL_API_KEY=your-vt-api-key
+ABUSEIPDB_API_KEY=your-abuseipdb-key
+```
+
+#### Notifications
+
+```env
+SLACK_WEBHOOK_URL=https://hooks.slack.com/your-webhook
+```
+
+### 5. Initialize database
+
+```bash
+alembic upgrade head
+```
+
+### 6. Create admin user
+
+```bash
+python -m scripts.create_admin --username admin --password "YourPassword123!!"
+```
+
+### 7. Load sample data (optional)
+
+```bash
+python -m scripts.seed_data
+```
+
+### 8. Start backend
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+### 9. Start frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173/login` and log in with the admin credentials you created.
+
+---
+
+## Log Source Integration
+
+### Supported Sources
+
+| Source              | Type    | Auth Method             |
+|---------------------|---------|-------------------------|
+| Microsoft Sentinel  | SIEM    | Azure Service Principal |
+| AWS GuardDuty       | Cloud   | AWS IAM Keys            |
+| Microsoft Defender  | EDR     | Azure Service Principal |
+| Suricata            | IDS/IPS | File/Syslog             |
+| Snort               | IDS/IPS | File/Syslog             |
+| Windows Event Log   | OS      | WinRM/Agent             |
+| Syslog              | Generic | UDP/TCP 514             |
+| Zeek                | Network | File/API                |
+
+### Sending Logs via API
+
+Send normalized events to `/api/v1/ingest` with a Bearer token:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "Sentinel",
+    "events": [{
+      "AlertType": "BruteForce",
+      "Severity": "High",
+      "AlertName": "Multiple failed logins",
+      "SourceIP": "185.220.101.45"
+    }]
+  }'
+```
+
+The backend will:
+- Parse the event with the source-specific parser
+- Normalize into a `NormalizedAlert`
+- Map to MITRE ATT&CK techniques
+- Run the decision engine (risk score, correlation)
+- Persist it as an `Alert` and `AlertDecision`
+
+---
+
+## User Roles
+
+KESTREL ships with 4 roles:
+
+| Role           | Permissions                                        |
+|----------------|----------------------------------------------------|
+| **admin**      | Full access, create users, manage sources & config |
+| **senior_analyst** | View all, run AI, manage alerts & incidents   |
+| **analyst**    | View and update alerts & incidents                 |
+| **viewer**     | Read-only access                                   |
+
+### Create a new user (admin only)
+
+```http
+POST /api/v1/auth/users
+Authorization: Bearer ADMIN_TOKEN
+Content-Type: application/json
+
+{
+  "username": "analyst1",
+  "password": "SecurePass2026!!",
+  "role": "analyst"
+}
+```
+
+---
+
+## AI Configuration
+
+KESTREL uses AI to:
+
+- Summarize alert context in plain English
+- Extract key facts (severity, affected assets, IOCs)
+- Suggest remediation steps
+- Recommend next actions for analysts
+
+If no AI provider is configured (no key), KESTREL falls back to a **rule-based summary** so the UI never shows empty analysis.
+
+To enable real AI triage, add your provider key to `.env`, restart the backend, then click **“Run AI Analysis”** on any alert detail page.
+
+---
+
+## Running Tests
+
+### Unit / Integration / Security Tests
+
+```bash
+pytest tests/ -v
+```
+
+You can also run specific groups (if configured):
+
+```bash
+pytest tests/decision_engine -v
+pytest tests/security -v
+pytest tests/integration -v
+```
+
+### CI Helpers
+
+There is a helper script that can be wired to run all checks (if present):
+
+```bash
+python -m scripts.run_tests
+```
+
+---
+
+## API Documentation
+
+- Swagger UI: `http://localhost:8000/docs`  
+- ReDoc: `http://localhost:8000/redoc`
+
+Auth is via Bearer token (`Authorization: Bearer <access_token>`). You can obtain a token from `/api/v1/auth/login`.
+
+---
+
+## Docker
+
+Run the platform via Docker Compose:
+
+```bash
+cd docker
+docker compose up --build
+```
+
+Services (depending on your compose file):
+
+- **Backend**: `http://localhost:8000`
+- **Frontend**: `http://localhost:3000` (or served via the backend in production)
+
+---
+
+## Project Structure
+
+```text
+kestrel/
+├── app/
+│   ├── ai/          # AI provider clients and prompts
+│   ├── api/         # FastAPI routers (auth, alerts, incidents, ingest, ai)
+│   ├── core/        # Decision engine, parsers, MITRE mapping, detection rules
+│   ├── enrichment/  # VirusTotal, AbuseIPDB, threat feeds
+│   ├── models/      # SQLAlchemy models
+│   ├── security/    # Auth, RBAC, JWT, middleware, sanitization
+│   └── connectors/  # Sentinel, GuardDuty, Defender, etc.
+├── frontend/
+│   ├── src/
+│   │   ├── api/       # Typed API client functions
+│   │   ├── pages/     # React pages (Dashboard, Alerts, Incidents, MITRE, Sources)
+│   │   ├── components/# Reusable UI and domain components
+│   │   └── security/  # Auth context, route guards
+│   └── templates/     # Jinja2 templates (for server-rendered views)
+├── tests/             # Pytest unit, integration, security tests
+├── scripts/           # Seed data, admin creation, security checks
+└── docker/            # Dockerfile and docker-compose configs
+```
+
+---
+
+## Security Notes
+
+KESTREL is designed with secure defaults suitable for SOC environments:
+
+- **Password storage**: argon2id via `argon2-cffi` (OWASP recommended)
+- **JWT**: RS256 asymmetric signing; private key never leaves the server
+- **RBAC**: Fine-grained permissions per role; enforced on every protected route
+- **Rate limiting**: Per-IP / per-key rate limits with blocking thresholds
+- **Account lockout**: Progressive delays and lockout after repeated failed logins
+- **Input sanitization**:
+  - XSS filtering using `bleach` and HTML escaping
+  - JSON depth / size limits to prevent deep or oversized payloads
+  - Path traversal protection for any file-based access
+- **CSRF**: CSRF token support for state-changing operations (when using cookies)
+- **Audit logging**: Every analyst action and access-denied event is written to an `AuditLog` table
+- **Headers**: Strict security headers (`CSP`, `HSTS`, `X-Frame-Options`, `X-Content-Type-Options`, etc.)
+
+For production, you should also:
+
+- Terminate TLS in front of KESTREL (reverse proxy / ingress)
+- Set `ENVIRONMENT=production` and use PostgreSQL with SSL
+- Rotate secrets regularly and store them in a proper secret manager
+
+---
+
+## Built With
+
+- **Backend**: FastAPI, SQLAlchemy, Alembic, `argon2-cffi`, `python-jose`
+- **Frontend**: React, Vite, TailwindCSS, Recharts, TanStack Query
+- **Templating / UI**: Jinja2, HTMX, Chart.js
+- **Observability**: Prometheus metrics, Grafana dashboards (optional)
+
+---
 
 ## License
 
-See repository license.
+See the repository `LICENSE` file for details.
 </file>
 
 <file path="requirements-dev.txt">
@@ -15684,6 +17873,353 @@ if __name__ == "__main__":
 </file>
 
 <file path="scripts/seed_data.py">
+#!/usr/bin/env python3
+"""
+Seed the KESTREL SOC platform with realistic sample alerts.
+
+Usage:
+    python -m scripts.seed_data
+"""
+
+import argparse
+import asyncio
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+import httpx
+
+BASE_URL = "http://localhost:8000"
+
+# Simple ANSI colors for terminal output
+GREEN = "\033[32m"
+RED = "\033[31m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
+
+def _iso(ts: str) -> str:
+    """Return ISO timestamp; helper so all samples are valid ISO strings."""
+    # If user passes already-ISO, just return; otherwise attempt to parse.
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).isoformat()
+
+
+ALERTS: List[Dict[str, Any]] = [
+    # Sentinel: BruteForce (High)
+    {
+        "source": "Sentinel",
+        "events": [
+            {
+                "Severity": "High",
+                "DisplayName": "Multiple failed logins from 185.220.101.45",
+                "AlertType": "BruteForce",
+                "Category": "Auth",
+                "UserPrincipalName": "jdoe@contoso.com",
+                "SourceIP": "185.220.101.45",
+                "CompromisedEntity": "WS-001",
+                "StartTime": _iso("2026-03-02T00:10:00Z"),
+            }
+        ],
+    },
+    # Sentinel: Lateral Movement (modeled via category)
+    {
+        "source": "Sentinel",
+        "events": [
+            {
+                "Severity": "High",
+                "DisplayName": "Suspicious lateral movement from server-001",
+                "AlertType": "LateralMovement",
+                "Category": "Lateral Movement",
+                "UserPrincipalName": "svc-app@contoso.com",
+                "SourceIP": "10.0.0.5",
+                "CompromisedEntity": "SRV-APP-01",
+                "StartTime": _iso("2026-03-02T00:15:00Z"),
+            }
+        ],
+    },
+    # Sentinel: Privilege Escalation
+    {
+        "source": "Sentinel",
+        "events": [
+            {
+                "Severity": "High",
+                "DisplayName": "Suspicious privilege escalation on DC-01",
+                "AlertType": "PrivilegeEscalation",
+                "Category": "Privilege Escalation",
+                "UserPrincipalName": "admin-temp@contoso.com",
+                "SourceIP": "10.0.0.10",
+                "CompromisedEntity": "DC-01",
+                "StartTime": _iso("2026-03-02T00:18:00Z"),
+            }
+        ],
+    },
+    # Suricata: CobaltStrike (Critical)
+    {
+        "source": "Suricata",
+        "events": [
+            {
+                "event_type": "alert",
+                "src_ip": "10.0.0.5",
+                "dest_ip": "185.220.101.45",
+                "alert": {
+                    "severity": 1,
+                    "signature": "ET MALWARE CobaltStrike Beacon",
+                    "category": "Malware",
+                },
+                "timestamp": _iso("2026-03-02T00:20:00Z"),
+            }
+        ],
+    },
+    # Suricata: Port Scan (Medium)
+    {
+        "source": "Suricata",
+        "events": [
+            {
+                "event_type": "alert",
+                "src_ip": "203.0.113.10",
+                "dest_ip": "10.0.0.20",
+                "alert": {
+                    "severity": 3,
+                    "signature": "ET SCAN Potential SSH Scan",
+                    "category": "Network",
+                },
+                "timestamp": _iso("2026-03-02T00:22:00Z"),
+            }
+        ],
+    },
+    # Suricata: DNS Tunnel (High)
+    {
+        "source": "Suricata",
+        "events": [
+            {
+                "event_type": "alert",
+                "src_ip": "10.0.0.15",
+                "dest_ip": "198.51.100.50",
+                "alert": {
+                    "severity": 2,
+                    "signature": "ET TROJAN Possible DNS Tunneling",
+                    "category": "Network",
+                },
+                "timestamp": _iso("2026-03-02T00:24:00Z"),
+            }
+        ],
+    },
+    # WindowsEventLog: 4625 Failed Login (Medium/High Auth)
+    {
+        "source": "WindowsEventLog",
+        "events": [
+            {
+                "EventID": 4625,
+                "EventData": {
+                    "SubjectUserName": "SYSTEM",
+                    "TargetUserName": "administrator",
+                    "IpAddress": "192.168.1.100",
+                },
+                "TimeCreated": _iso("2026-03-02T00:26:00Z"),
+                "Message": "An account failed to log on.",
+            }
+        ],
+    },
+    # WindowsEventLog: 4720 New Admin Created (High Persistence)
+    {
+        "source": "WindowsEventLog",
+        "events": [
+            {
+                "EventID": 4720,
+                "EventData": {
+                    "SubjectUserName": "DOMAIN\\Administrator",
+                    "TargetUserName": "svc-admin",
+                    "IpAddress": "192.168.1.50",
+                },
+                "TimeCreated": _iso("2026-03-02T00:28:00Z"),
+                "Message": "A user account was created.",
+            }
+        ],
+    },
+    # WindowsEventLog: 4688 Suspicious process (Mimikatz-like)
+    {
+        "source": "WindowsEventLog",
+        "events": [
+            {
+                "EventID": 4688,
+                "EventData": {
+                    "SubjectUserName": "DOMAIN\\admin",
+                    "TargetUserName": "admin",
+                    "IpAddress": "192.168.1.75",
+                },
+                "TimeCreated": _iso("2026-03-02T00:30:00Z"),
+                "Message": "A new process has been created: mimikatz.exe",
+            }
+        ],
+    },
+    # Defender: Ransomware (Critical)
+    {
+        "source": "Defender",
+        "events": [
+            {
+                "title": "Ransomware behavior detected",
+                "severity": "Critical",
+                "category": "Impact",
+                "devices": [
+                    {
+                        "deviceDnsName": "DESKTOP-ABC123",
+                        "networkInterfaces": [{"ipAddress": "10.0.0.30"}],
+                    }
+                ],
+                "relatedUser": {"userName": "victim@contoso.com"},
+                "alertCreationTime": _iso("2026-03-02T00:32:00Z"),
+                "mitreTechniques": [{"id": "T1486", "category": "Impact"}],
+            }
+        ],
+    },
+    # Defender: Emotet (High)
+    {
+        "source": "Defender",
+        "events": [
+            {
+                "title": "Emotet malware detected in email attachment",
+                "severity": "High",
+                "category": "Execution",
+                "devices": [
+                    {
+                        "deviceDnsName": "LAPTOP-USER01",
+                        "networkInterfaces": [{"ipAddress": "10.0.0.31"}],
+                    }
+                ],
+                "relatedUser": {"userName": "user1@contoso.com"},
+                "alertCreationTime": _iso("2026-03-02T00:34:00Z"),
+                "mitreTechniques": [{"id": "T1204", "category": "Execution"}],
+            }
+        ],
+    },
+    # GuardDuty: SSH Brute Force (High)
+    {
+        "source": "GuardDuty",
+        "events": [
+            {
+                "title": "EC2 instance is being probed on port 22",
+                "severity": 7.5,
+                "type": "UnauthorizedAccess:EC2/SSHBruteForce",
+                "resource": {
+                    "instanceDetails": {
+                        "instanceId": "i-0123456789abcdef0",
+                    }
+                },
+                "service": {
+                    "action": {
+                        "networkConnectionAction": {
+                            "remoteIpDetails": {"ipAddressV4": "185.220.101.45"}
+                        }
+                    }
+                },
+                "createdAt": _iso("2026-03-02T00:36:00Z"),
+            }
+        ],
+    },
+    # GuardDuty: Crypto Mining (High)
+    {
+        "source": "GuardDuty",
+        "events": [
+            {
+                "title": "EC2 instance suspected of crypto mining",
+                "severity": 7.0,
+                "type": "CryptoCurrency:EC2/BitcoinTool.B",
+                "resource": {
+                    "instanceDetails": {
+                        "instanceId": "i-0fedcba9876543210",
+                    }
+                },
+                "service": {
+                    "action": {
+                        "networkConnectionAction": {
+                            "remoteIpDetails": {"ipAddressV4": "203.0.113.200"}
+                        }
+                    }
+                },
+                "createdAt": _iso("2026-03-02T00:38:00Z"),
+            }
+        ],
+    },
+    # Snort: SQL Injection (Medium) via GenericParser
+    {
+        "source": "Snort",
+        "events": [
+            {
+                "severity": "Medium",
+                "title": "SQL Injection attempt detected on /login",
+                "src_ip": "203.0.113.5",
+                "dest_ip": "10.0.0.40",
+                "timestamp": _iso("2026-03-02T00:40:00Z"),
+            }
+        ],
+    },
+    # Syslog: Crontab Persistence (High) via GenericParser
+    {
+        "source": "Syslog",
+        "events": [
+            {
+                "severity": "High",
+                "title": "User root edited crontab",
+                "host": "linux-web-01",
+                "message": "CRON: (root) CMD (/usr/bin/python /opt/persist.py)",
+                "timestamp": _iso("2026-03-02T00:42:00Z"),
+            }
+        ],
+    },
+]
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description="Seed KESTREL with sample alerts")
+    parser.add_argument("--username", default="socadmin")
+    parser.add_argument("--password", default="Soc2026!Pass")
+    parser.add_argument("--base-url", default=BASE_URL)
+    args = parser.parse_args()
+
+    async with httpx.AsyncClient(base_url=args.base_url, timeout=10) as client:
+        # Login
+        print(f"{YELLOW}[*]{RESET} Logging in as {args.username} at {args.base_url} ...")
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"username": args.username, "password": args.password},
+        )
+        if resp.status_code != 200:
+            print(f"{RED}[!]{RESET} Login failed: {resp.status_code} {resp.text}")
+            return
+        token = resp.json().get("access_token")
+        if not token:
+            print(f"{RED}[!]{RESET} Login response missing access_token")
+            return
+        headers = {"Authorization": f"Bearer {token}"}
+        print(f"{GREEN}[+]{RESET} Login successful.")
+
+        passed = 0
+        failed = 0
+
+        for idx, alert in enumerate(ALERTS, start=1):
+            source = alert.get("source", "<unknown>")
+            try:
+                r = await client.post("/api/v1/ingest", json=alert, headers=headers)
+            except Exception as e:  # network or serialization error
+                failed += 1
+                print(f"{RED}[{idx:02d}] FAIL{RESET} {source}: exception {e}")
+                continue
+
+            if r.status_code == 200:
+                passed += 1
+                print(f"{GREEN}[{idx:02d}] OK  {RESET}{source}")
+            else:
+                failed += 1
+                print(f"{RED}[{idx:02d}] FAIL{RESET} {source}: {r.status_code} {r.text}")
+
+        print(f"\nSeed complete: {GREEN}{passed} ingested{RESET}, {RED}{failed} failed{RESET}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 #!/usr/bin/env python3
 """Seed database with sample data (stub)."""
 

@@ -63,8 +63,8 @@ export function Login() {
         onSubmit={handleSubmit}
         className="w-full max-w-sm p-6 rounded-lg border border-soc-border bg-soc-surface shadow"
       >
-        <h1 className="text-xl font-semibold text-soc-text mb-1">SOC Platform</h1>
-        <p className="text-sm text-soc-muted mb-4">Sign in to continue</p>
+        <h1 className="text-xl font-semibold text-soc-text mb-1">KESTREL</h1>
+        <p className="text-sm text-soc-muted mb-4">AI-assisted threat detection</p>
         {error && (
           <p
             className="text-sm text-red-400 mb-3 p-2 rounded bg-red-500/10 border border-red-500/20"

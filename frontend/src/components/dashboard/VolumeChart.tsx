@@ -7,7 +7,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { formatDateTime } from '@/utils/time'
 
 interface VolumeChartProps {
   data: Array<{ time?: string; date?: string; count: number }>
@@ -27,7 +26,12 @@ export function VolumeChart({ data }: VolumeChartProps) {
 
   const chartData = data.map((d) => ({
     ...d,
-    label: (d.time ?? d.date) ? formatDateTime(d.time ?? d.date!) : '',
+    label: d.date
+      ? new Date(`${d.date}T00:00:00`).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        })
+      : '',
   }))
 
   return (

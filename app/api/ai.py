@@ -75,7 +75,8 @@ async def summarize_alert(
     updated_at = alert.updated_at
     if updated_at is not None and updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=timezone.utc)
-    if alert.ai_summary and updated_at and updated_at >= cache_cutoff:
+    is_stub = bool(alert.ai_summary and alert.ai_summary.startswith("Summary for alert:"))
+    if alert.ai_summary and not is_stub and updated_at and updated_at >= cache_cutoff:
         return SummarizeResponse(
             alert_id=alert.id,
             ai_summary=alert.ai_summary,
@@ -101,33 +102,38 @@ async def summarize_alert(
         "risk_score": alert.risk_score,
     }
     result = await run_ai_triage(alert_dict)
-    if not result:
-        # Fallback to rule-based summary when no AI key configured
+    if result:
+        alert.ai_summary = result.get("summary", "")
+        alert.ai_key_facts = result.get("key_facts") or {}
+        alert.ai_affected = result.get("affected") or {}
+        alert.ai_evidence = result.get("evidence") or {}
+        alert.ai_remediation = result.get("remediation") or {}
+        alert.ai_next_steps = result.get("next_steps") or {}
+        alert.updated_at = datetime.now(timezone.utc)
+        await db.flush()
+        await db.commit()
+        return SummarizeResponse(
+            alert_id=alert.id,
+            ai_summary=alert.ai_summary,
+            ai_key_facts=alert.ai_key_facts,
+            ai_affected=alert.ai_affected,
+            ai_evidence=alert.ai_evidence,
+            ai_remediation=alert.ai_remediation,
+            ai_next_steps=alert.ai_next_steps,
+            cached=False,
+        )
+    else:
+        # No AI key configured — return stub in response
+        # but do NOT write to database so user can retry
+        # once they add an API key in Settings
         stub = _stub_ai_summary(alert)
-        result = {
-            "summary": stub[0],
-            "key_facts": stub[1],
-            "affected": stub[2],
-            "evidence": stub[3],
-            "remediation": stub[4],
-            "next_steps": stub[5],
-        }
-    alert.ai_summary = result.get("summary", "")
-    alert.ai_key_facts = result.get("key_facts", {})
-    alert.ai_affected = result.get("affected", {})
-    alert.ai_evidence = result.get("evidence", {})
-    alert.ai_remediation = result.get("remediation", {})
-    alert.ai_next_steps = result.get("next_steps", {})
-    alert.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-
-    return SummarizeResponse(
-        alert_id=alert.id,
-        ai_summary=alert.ai_summary,
-        ai_key_facts=alert.ai_key_facts,
-        ai_affected=alert.ai_affected,
-        ai_evidence=alert.ai_evidence,
-        ai_remediation=alert.ai_remediation,
-        ai_next_steps=alert.ai_next_steps,
-        cached=False,
-    )
+        return SummarizeResponse(
+            alert_id=alert.id,
+            ai_summary=stub[0],
+            ai_key_facts=stub[1],
+            ai_affected=stub[2],
+            ai_evidence=stub[3],
+            ai_remediation=stub[4],
+            ai_next_steps=stub[5],
+            cached=False,
+        )

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -107,6 +107,42 @@ async def login(
     _set_refresh_cookie(response, refresh_token)
     return LoginResponse(access_token=access_token, token_type="bearer", expires_in=expires_in)
 
+
+@router.post("/setup")
+async def first_time_setup(
+    body: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create first admin user. Only works if no users exist."""
+    count_r = await db.execute(select(func.count()).select_from(User))
+    count = count_r.scalar()
+    if count and count > 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Setup already completed. Use admin account.",
+        )
+    from app.security.auth import hash_password, validate_password_policy
+
+    validate_password_policy(body.password, body.username)
+    user = User(
+        username=body.username,
+        email=f"{body.username}@kestrel.local",
+        password_hash=hash_password(body.password),
+        role="admin",
+        is_active=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    await db.commit()
+    return {"created": True, "username": user.username}
+
+
+@router.get("/setup-status")
+async def setup_status(db: AsyncSession = Depends(get_db)):
+    """Check if initial setup is complete."""
+    count_r = await db.execute(select(func.count()).select_from(User))
+    count = count_r.scalar() or 0
+    return {"setup_complete": count > 0}
 
 @router.post("/users", status_code=201)
 async def create_user(
