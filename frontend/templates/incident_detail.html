@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Incident {{ incident_id[:8] }} - SOC Platform{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <a href="/incidents" class="text-soc-muted hover:text-soc-text text-sm">← Incidents</a>
+  <h1 class="text-2xl font-semibold text-soc-text font-mono">{{ incident_id }}</h1>
+
+  <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+    <h3 class="text-sm font-semibold text-soc-text mb-3">Alerts in this incident</h3>
+    <ul class="space-y-2">
+      {% for a in alerts %}
+      <li class="flex items-center gap-4">
+        <a href="/alerts/{{ a.id }}" class="text-soc-low hover:underline">{{ a.title[:60] if a.title else a.id }}{% if a.title and a.title|length > 60 %}...{% endif %}</a>
+        <span class="rounded px-1.5 py-0.5 text-xs font-medium text-white" style="background-color:{{ severity_color(a.severity.value if a.severity else '') }}">{{ a.severity.value if a.severity else '-' }}</span>
+        <span class="text-soc-muted text-sm">{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '' }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  {% if mitre_techniques %}
+  <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+    <h3 class="text-sm font-semibold text-soc-text mb-3">MITRE techniques</h3>
+    <div class="flex flex-wrap gap-2">
+      {% for t in mitre_techniques %}
+      <span class="rounded px-2 py-1 text-xs bg-soc-border text-soc-muted">{{ t.get('technique_id', '') }} {{ t.get('technique_name', '') }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

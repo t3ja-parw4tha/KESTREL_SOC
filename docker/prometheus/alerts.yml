@@ -1,0 +1,42 @@
+groups:
+  - name: soc_platform_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on SOC platform"
+
+      - alert: DatabaseDown
+        expr: up{job="soc-platform"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SOC platform is down"
+
+      - alert: AIProviderDown
+        expr: rate(soc_ai_generations_total{status="error"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI provider error rate is high"
+
+      - alert: ConnectorStale
+        expr: time() - soc_connector_last_run_timestamp > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector has not run in over 1 hour"
+
+      - alert: CriticalAlertsAccumulating
+        expr: soc_alerts_by_status{status="open"} > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10 unacknowledged critical alerts"

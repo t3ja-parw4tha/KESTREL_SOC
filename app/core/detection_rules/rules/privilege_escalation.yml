@@ -1,0 +1,6 @@
+name: privilege_escalation
+description: Detect privilege escalation
+mitre:
+  - T1068
+  - T1548
+condition: {}

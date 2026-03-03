@@ -1,0 +1,6 @@
+name: lateral_movement
+description: Detect lateral movement
+mitre:
+  - T1021.002
+  - T1570
+condition: {}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Alerts - SOC Platform{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <h1 class="text-2xl font-semibold text-soc-text">Alerts</h1>
+
+  <div class="rounded-lg border border-soc-border bg-[#181a21] p-4" id="alerts-filter-form" x-data="{ severity: '', status: '', source: '', search: '' }">
+    <p class="text-sm text-soc-muted mb-3">Filters</p>
+    <div class="flex flex-wrap gap-4 items-end">
+      <div>
+        <label class="block text-xs text-soc-muted mb-1">Severity</label>
+        <select name="severity" x-model="severity" class="rounded border border-soc-border bg-soc-bg text-soc-text px-3 py-1.5 text-sm"
+                hx-get="/alerts/table" hx-target="#alerts-table-wrap" hx-include="#alerts-filter-form" hx-trigger="change">
+          <option value="">All</option>
+          <option value="Critical">Critical</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-soc-muted mb-1">Status</label>
+        <select name="status" x-model="status" class="rounded border border-soc-border bg-soc-bg text-soc-text px-3 py-1.5 text-sm"
+                hx-get="/alerts/table" hx-target="#alerts-table-wrap" hx-include="#alerts-filter-form" hx-trigger="change">
+          <option value="">All</option>
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="resolved">Resolved</option>
+          <option value="false_positive">False Positive</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-soc-muted mb-1">Source</label>
+        <input type="text" name="source" x-model="source" placeholder="Source" class="rounded border border-soc-border bg-soc-bg text-soc-text px-3 py-1.5 text-sm w-40"
+               hx-get="/alerts/table" hx-target="#alerts-table-wrap" hx-include="#alerts-filter-form" hx-trigger="keyup changed delay:300ms"/>
+      </div>
+      <div>
+        <label class="block text-xs text-soc-muted mb-1">Search</label>
+        <input type="text" name="search" x-model="search" placeholder="Search title" class="rounded border border-soc-border bg-soc-bg text-soc-text px-3 py-1.5 text-sm w-48"
+               hx-get="/alerts/table" hx-target="#alerts-table-wrap" hx-include="#alerts-filter-form" hx-trigger="keyup changed delay:300ms"/>
+      </div>
+      <input type="hidden" name="page" value="1" />
+      <input type="hidden" name="limit" value="20" />
+    </div>
+  </div>
+
+  <div id="alerts-table-wrap" class="rounded-lg border border-soc-border bg-[#181a21] p-4 overflow-x-auto"
+       hx-get="/alerts/table?page=1&limit=20"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <p class="text-soc-muted">Loading alerts...</p>
+  </div>
+</div>
+{% endblock %}

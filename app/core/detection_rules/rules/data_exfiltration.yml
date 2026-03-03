@@ -1,0 +1,6 @@
+name: data_exfiltration
+description: Detect data exfiltration
+mitre:
+  - T1041
+  - T1048
+condition: {}

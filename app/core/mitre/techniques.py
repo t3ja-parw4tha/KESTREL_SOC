@@ -1,0 +1,340 @@
+"""MITRE ATT&CK Enterprise technique definitions."""
+
+from typing import TypedDict
+
+
+class TechniqueEntry(TypedDict):
+    name: str
+    tactic: str
+    description: str
+    subtechniques: list[str]
+    platforms: list[str]
+    data_sources: list[str]
+
+
+TECHNIQUES: dict[str, TechniqueEntry] = {
+    # Initial Access
+    "T1078": {
+        "name": "Valid Accounts",
+        "tactic": "Initial Access",
+        "description": "Adversaries may obtain and abuse credentials of existing accounts to gain initial access.",
+        "subtechniques": ["T1078.001", "T1078.002", "T1078.003", "T1078.004"],
+        "platforms": ["Windows", "Linux", "macOS", "Azure AD", "Google Workspace", "SaaS", "IaaS"],
+        "data_sources": ["Authentication logs", "Windows Event Logs", "Cloud account logs"],
+    },
+    "T1190": {
+        "name": "Exploit Public-Facing Application",
+        "tactic": "Initial Access",
+        "description": "Adversaries may exploit vulnerabilities in internet-facing applications to gain initial access.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network", "Containers", "IaaS"],
+        "data_sources": ["Application logs", "Web application firewall logs", "Network traffic"],
+    },
+    "T1566": {
+        "name": "Phishing",
+        "tactic": "Initial Access",
+        "description": "Adversaries may send phishing messages to gain access to victim systems.",
+        "subtechniques": ["T1566.001", "T1566.002", "T1566.003"],
+        "platforms": ["Windows", "Linux", "macOS", "Office 365", "Google Workspace", "SaaS"],
+        "data_sources": ["Email gateway logs", "Anti-phishing logs", "User reports"],
+    },
+    "T1133": {
+        "name": "External Remote Services",
+        "tactic": "Initial Access",
+        "description": "Adversaries may leverage external remote services to gain initial access to internal networks.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Authentication logs", "VPN logs", "RDP logs"],
+    },
+    # Execution
+    "T1059": {
+        "name": "Command and Scripting Interpreter",
+        "tactic": "Execution",
+        "description": "Adversaries may abuse command and scripting interpreters to execute commands, scripts, or binaries.",
+        "subtechniques": ["T1059.001", "T1059.002", "T1059.003", "T1059.004", "T1059.005", "T1059.006", "T1059.007", "T1059.008"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "Command execution logs", "Script execution"],
+    },
+    "T1204": {
+        "name": "User Execution",
+        "tactic": "Execution",
+        "description": "Adversaries may rely on user actions to execute malicious code, such as opening a malicious file.",
+        "subtechniques": ["T1204.001", "T1204.002"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "File creation logs", "Application logs"],
+    },
+    "T1053": {
+        "name": "Scheduled Task/Job",
+        "tactic": "Execution",
+        "description": "Adversaries may abuse task scheduling functionality to facilitate initial or recurring execution.",
+        "subtechniques": ["T1053.001", "T1053.002", "T1053.003", "T1053.004", "T1053.005"],
+        "platforms": ["Windows", "Linux", "macOS", "Azure"],
+        "data_sources": ["Scheduled task logs", "Cron logs", "Cloud job logs"],
+    },
+    # Persistence
+    "T1136": {
+        "name": "Create Account",
+        "tactic": "Persistence",
+        "description": "Adversaries may create accounts to maintain access to victim systems.",
+        "subtechniques": ["T1136.001", "T1136.002", "T1136.003"],
+        "platforms": ["Windows", "Linux", "macOS", "Azure AD", "Office 365", "Google Workspace"],
+        "data_sources": ["Account creation logs", "Directory service logs", "Cloud identity logs"],
+    },
+    "T1543": {
+        "name": "Create or Modify System Process",
+        "tactic": "Persistence",
+        "description": "Adversaries may create or modify system processes to persist on a system.",
+        "subtechniques": ["T1543.001", "T1543.002", "T1543.003", "T1543.004"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "Service logs", "System configuration"],
+    },
+    "T1546": {
+        "name": "Event-Triggered Execution",
+        "tactic": "Persistence",
+        "description": "Adversaries may establish persistence using system mechanisms that trigger execution based on events.",
+        "subtechniques": ["T1546.001", "T1546.002", "T1546.003", "T1546.004", "T1546.005", "T1546.006", "T1546.007", "T1546.008", "T1546.009", "T1546.010", "T1546.011", "T1546.012", "T1546.013", "T1546.014", "T1546.015"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Windows Registry", "Process creation logs", "Authentication logs"],
+    },
+    # Privilege Escalation
+    "T1068": {
+        "name": "Exploitation for Privilege Escalation",
+        "tactic": "Privilege Escalation",
+        "description": "Adversaries may exploit software vulnerabilities to elevate privileges.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "Application logs", "Driver loads"],
+    },
+    "T1548": {
+        "name": "Abuse Elevation Control Mechanism",
+        "tactic": "Privilege Escalation",
+        "description": "Adversaries may abuse elevation control mechanisms to gain higher-level permissions.",
+        "subtechniques": ["T1548.001", "T1548.002", "T1548.003"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "Authentication logs", "Windows Event Logs"],
+    },
+    "T1134": {
+        "name": "Access Token Manipulation",
+        "tactic": "Privilege Escalation",
+        "description": "Adversaries may modify access tokens to operate under a different user or process.",
+        "subtechniques": ["T1134.001", "T1134.002", "T1134.003", "T1134.004", "T1134.005"],
+        "platforms": ["Windows"],
+        "data_sources": ["Process creation logs", "Authentication logs", "API monitoring"],
+    },
+    # Defense Evasion
+    "T1070": {
+        "name": "Indicator Removal on Host",
+        "tactic": "Defense Evasion",
+        "description": "Adversaries may delete or modify artifacts generated on a host system to remove evidence.",
+        "subtechniques": ["T1070.001", "T1070.002", "T1070.003", "T1070.004", "T1070.005", "T1070.006", "T1070.007", "T1070.008", "T1070.009"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["File deletion logs", "Windows Event Logs", "Audit logs"],
+    },
+    "T1562": {
+        "name": "Impair Defenses",
+        "tactic": "Defense Evasion",
+        "description": "Adversaries may modify or disable security tools to avoid detection.",
+        "subtechniques": ["T1562.001", "T1562.002", "T1562.003", "T1562.004", "T1562.006", "T1562.007", "T1562.008", "T1562.009", "T1562.010"],
+        "platforms": ["Windows", "Linux", "macOS", "Network", "Containers"],
+        "data_sources": ["Process creation logs", "Security software logs", "Windows Registry"],
+    },
+    "T1036": {
+        "name": "Masquerading",
+        "tactic": "Defense Evasion",
+        "description": "Adversaries may masquerade as legitimate files or other entities to avoid detection.",
+        "subtechniques": ["T1036.001", "T1036.002", "T1036.003", "T1036.004", "T1036.005"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["File metadata", "Process creation logs", "Binary analysis"],
+    },
+    # Credential Access
+    "T1003": {
+        "name": "OS Credential Dumping",
+        "tactic": "Credential Access",
+        "description": "Adversaries may dump credentials from the operating system to obtain account and credential material.",
+        "subtechniques": ["T1003.001", "T1003.002", "T1003.003", "T1003.004", "T1003.005", "T1003.006"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "API monitoring", "Authentication logs"],
+    },
+    "T1110": {
+        "name": "Brute Force",
+        "tactic": "Credential Access",
+        "description": "Adversaries may use brute force techniques to gain access to accounts when passwords are unknown or when password hashes are obtained.",
+        "subtechniques": ["T1110.001", "T1110.002", "T1110.003", "T1110.004"],
+        "platforms": ["Windows", "Linux", "macOS", "Azure AD", "Office 365", "Google Workspace", "SaaS"],
+        "data_sources": ["Authentication logs", "Windows Event Logs", "Cloud identity logs"],
+    },
+    "T1552": {
+        "name": "Unsecured Credentials",
+        "tactic": "Credential Access",
+        "description": "Adversaries may search for unsecured credentials in various locations to obtain access.",
+        "subtechniques": ["T1552.001", "T1552.002", "T1552.003", "T1552.004", "T1552.005", "T1552.006", "T1552.007"],
+        "platforms": ["Windows", "Linux", "macOS", "Office 365", "Azure", "Google Workspace", "SaaS"],
+        "data_sources": ["File system", "Configuration files", "Cloud storage"],
+    },
+    "T1555": {
+        "name": "Credentials from Password Stores",
+        "tactic": "Credential Access",
+        "description": "Adversaries may search for common password storage locations to obtain credentials.",
+        "subtechniques": ["T1555.001", "T1555.002", "T1555.003", "T1555.004"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["File access logs", "Process creation logs", "API monitoring"],
+    },
+    # Discovery
+    "T1046": {
+        "name": "Network Service Discovery",
+        "tactic": "Discovery",
+        "description": "Adversaries may attempt to get a listing of services running on remote hosts and the network.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Process use of network", "Packet capture"],
+    },
+    "T1082": {
+        "name": "System Information Discovery",
+        "tactic": "Discovery",
+        "description": "Adversaries may attempt to get detailed information about the operating system and hardware.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "API monitoring", "System calls"],
+    },
+    "T1083": {
+        "name": "File and Directory Discovery",
+        "tactic": "Discovery",
+        "description": "Adversaries may enumerate files and directories to understand the environment.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["File access logs", "Process creation logs", "API monitoring"],
+    },
+    "T1087": {
+        "name": "Account Discovery",
+        "tactic": "Discovery",
+        "description": "Adversaries may attempt to get a listing of valid accounts on a system or network.",
+        "subtechniques": ["T1087.001", "T1087.002", "T1087.003", "T1087.004"],
+        "platforms": ["Windows", "Linux", "macOS", "Azure AD", "Office 365", "Google Workspace"],
+        "data_sources": ["Authentication logs", "Directory service logs", "Cloud identity logs"],
+    },
+    # Lateral Movement
+    "T1021": {
+        "name": "Remote Services",
+        "tactic": "Lateral Movement",
+        "description": "Adversaries may use valid accounts to interact with remote services to move laterally.",
+        "subtechniques": ["T1021.001", "T1021.002", "T1021.003"],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Authentication logs", "Network traffic", "Process creation logs"],
+    },
+    "T1570": {
+        "name": "Lateral Tool Transfer",
+        "tactic": "Lateral Movement",
+        "description": "Adversaries may transfer tools or other files between systems in a network.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "File transfer logs", "Process creation logs"],
+    },
+    "T1550": {
+        "name": "Use Alternate Authentication Material",
+        "tactic": "Lateral Movement",
+        "description": "Adversaries may use alternate authentication material to move laterally and gain access to systems.",
+        "subtechniques": ["T1550.001", "T1550.002", "T1550.003", "T1550.004"],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Authentication logs", "Network traffic", "Ticket usage"],
+    },
+    # Collection
+    "T1213": {
+        "name": "Data from Information Repositories",
+        "tactic": "Collection",
+        "description": "Adversaries may collect data from information repositories such as databases or other structured data.",
+        "subtechniques": ["T1213.001", "T1213.002", "T1213.003"],
+        "platforms": ["Office 365", "Google Workspace", "SaaS", "IaaS"],
+        "data_sources": ["API logs", "Database access logs", "Cloud storage access"],
+    },
+    "T1530": {
+        "name": "Data from Cloud Storage Object",
+        "tactic": "Collection",
+        "description": "Adversaries may access data objects from cloud storage to collect sensitive data.",
+        "subtechniques": [],
+        "platforms": ["Azure", "Google Workspace", "AWS", "SaaS"],
+        "data_sources": ["Cloud storage access logs", "API logs", "Data access logs"],
+    },
+    "T1560": {
+        "name": "Archive Collected Data",
+        "tactic": "Collection",
+        "description": "Adversaries may compress or encrypt data that is collected prior to exfiltration.",
+        "subtechniques": ["T1560.001", "T1560.002", "T1560.003"],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Process creation logs", "File creation logs", "Network traffic"],
+    },
+    # Exfiltration
+    "T1030": {
+        "name": "Data Transfer Size Limits",
+        "tactic": "Exfiltration",
+        "description": "Adversaries may exfiltrate data in small chunks to avoid detection based on size.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Data transfer logs", "Packet capture"],
+    },
+    "T1041": {
+        "name": "Exfiltration Over C2 Channel",
+        "tactic": "Exfiltration",
+        "description": "Adversaries may steal data by exfiltrating it over an existing command and control channel.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Process use of network", "Packet capture"],
+    },
+    "T1048": {
+        "name": "Exfiltration Over Alternative Protocol",
+        "tactic": "Exfiltration",
+        "description": "Adversaries may steal data by exfiltrating it over a protocol different from the main C2 channel.",
+        "subtechniques": ["T1048.001", "T1048.002", "T1048.003"],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Packet capture", "Firewall logs"],
+    },
+    # Command and Control
+    "T1071": {
+        "name": "Application Layer Protocol",
+        "tactic": "Command and Control",
+        "description": "Adversaries may use application layer protocols for communication between infected systems.",
+        "subtechniques": ["T1071.001", "T1071.002", "T1071.003"],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Packet capture", "Netflow"],
+    },
+    "T1571": {
+        "name": "Non-Standard Port",
+        "tactic": "Command and Control",
+        "description": "Adversaries may use a non-standard port for C2 to bypass firewalls and avoid detection.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Firewall logs", "Process use of network"],
+    },
+    "T1573": {
+        "name": "Encrypted Channel",
+        "tactic": "Command and Control",
+        "description": "Adversaries may use a protocol that includes encryption to hide C2 traffic.",
+        "subtechniques": ["T1573.001", "T1573.002"],
+        "platforms": ["Windows", "Linux", "macOS", "Network"],
+        "data_sources": ["Network traffic", "Packet capture", "SSL/TLS inspection"],
+    },
+    # Impact
+    "T1485": {
+        "name": "Data Destruction",
+        "tactic": "Impact",
+        "description": "Adversaries may destroy data and files on systems to disrupt availability or prevent recovery.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS", "Azure", "Google Workspace", "SaaS"],
+        "data_sources": ["File deletion logs", "Cloud storage logs", "Backup logs"],
+    },
+    "T1486": {
+        "name": "Data Encrypted for Impact",
+        "tactic": "Impact",
+        "description": "Adversaries may encrypt data on target systems to interrupt availability and extort payment.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["File modification logs", "Process creation logs", "Backup logs"],
+    },
+    "T1490": {
+        "name": "Inhibit System Recovery",
+        "tactic": "Impact",
+        "description": "Adversaries may delete or remove built-in data and turn off recovery features to prevent restoration.",
+        "subtechniques": [],
+        "platforms": ["Windows", "Linux", "macOS"],
+        "data_sources": ["Backup logs", "Process creation logs", "Windows Event Logs"],
+    },
+}

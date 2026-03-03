@@ -1,0 +1,1 @@
+"""Connector runner (stub)."""

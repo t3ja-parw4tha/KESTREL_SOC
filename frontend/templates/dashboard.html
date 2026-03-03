@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - SOC Platform{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-2xl font-semibold text-soc-text">Dashboard</h1>
+
+  <!-- Stats row -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <p class="text-sm text-soc-muted">Total Alerts</p>
+      <p class="text-2xl font-semibold text-soc-text">{{ total_alerts }}</p>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <p class="text-sm text-soc-muted">Open Critical</p>
+      <p class="text-2xl font-semibold" style="color:#ef4444">{{ open_critical }}</p>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <p class="text-sm text-soc-muted">Open High</p>
+      <p class="text-2xl font-semibold" style="color:#f97316">{{ open_high }}</p>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <p class="text-sm text-soc-muted">Incidents</p>
+      <p class="text-2xl font-semibold text-soc-text">{{ incidents_count }}</p>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <p class="text-sm text-soc-muted">Coverage %</p>
+      <p class="text-2xl font-semibold" style="color:#22c55e">{{ coverage_pct }}%</p>
+    </div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <h3 class="text-sm font-semibold text-soc-text mb-3">Alerts by Severity</h3>
+      <canvas id="chartSeverity" height="200"></canvas>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <h3 class="text-sm font-semibold text-soc-text mb-3">Alert Volume (7 days)</h3>
+      <canvas id="chartVolume" height="200"></canvas>
+    </div>
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <h3 class="text-sm font-semibold text-soc-text mb-3">Alerts by Source</h3>
+      <canvas id="chartSource" height="200"></canvas>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Recent alerts -->
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <h3 class="text-sm font-semibold text-soc-text mb-3">Recent Alerts (last 10)</h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-soc-muted border-b border-soc-border">
+              <th class="pb-2 pr-2">Title</th>
+              <th class="pb-2 pr-2">Source</th>
+              <th class="pb-2 pr-2">Severity</th>
+              <th class="pb-2 pr-2">Status</th>
+              <th class="pb-2">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in recent_alerts %}
+            <tr class="border-b border-soc-border/50 hover:bg-soc-border/30">
+              <td class="py-2 pr-2"><a href="/alerts/{{ a.id }}" class="text-soc-text hover:underline truncate block max-w-[180px]">{{ a.title[:50] }}{% if a.title | length > 50 %}...{% endif %}</a></td>
+              <td class="py-2 pr-2 text-soc-muted">{{ a.source }}</td>
+              <td class="py-2 pr-2"><span class="rounded px-1.5 py-0.5 text-xs font-medium text-white" style="background-color:{{ severity_color(a.severity.value if a.severity else '') }}">{{ a.severity.value if a.severity else '-' }}</span></td>
+              <td class="py-2 pr-2 text-soc-muted">{{ a.status.value if a.status else '-' }}</td>
+              <td class="py-2 text-soc-muted">{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="py-4 text-soc-muted text-center">No recent alerts</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Active incidents -->
+    <div class="rounded-lg border border-soc-border bg-[#181a21] p-4">
+      <h3 class="text-sm font-semibold text-soc-text mb-3">Active Incidents (top 5 by risk)</h3>
+      <ul class="space-y-2">
+        {% for inc in active_incidents %}
+        <li class="flex items-center justify-between rounded border border-soc-border p-3 hover:bg-soc-border/30">
+          <a href="/incidents/{{ inc.incident_id }}" class="text-soc-text hover:underline font-mono text-sm">{{ inc.incident_id[:8] }}...</a>
+          <div class="flex items-center gap-2">
+            <span class="rounded px-1.5 py-0.5 text-xs font-medium text-white" style="background-color:{{ severity_color(inc.highest_severity) }}">{{ inc.highest_severity }}</span>
+            <span class="text-soc-muted text-sm">{{ inc.alert_count }} alerts</span>
+            <span class="text-soc-text font-medium">Risk {{ inc.max_risk_score or 0 }}</span>
+          </div>
+        </li>
+        {% else %}
+        <li class="text-soc-muted text-center py-4">No active incidents</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const severityColors = { Critical: '#ef4444', High: '#f97316', Medium: '#eab308', Low: '#3b82f6' };
+  const bySev = {{ alerts_by_severity | tojson | safe }};
+  const labels = ['Critical', 'High', 'Medium', 'Low'];
+  const data = labels.map(l => bySev[l] || 0);
+  const colors = labels.map(l => severityColors[l] || '#22c55e');
+  new Chart(document.getElementById('chartSeverity'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Alerts', data, backgroundColor: colors }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  const vol = {{ volume_timeline | tojson | safe }};
+  new Chart(document.getElementById('chartVolume'), {
+    type: 'line',
+    data: { labels: vol.map(v => v.date), datasets: [{ label: 'Volume', data: vol.map(v => v.count), borderColor: '#3b82f6', fill: true, tension: 0.3 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  const bySrc = {{ alerts_by_source | tojson | safe }};
+  const srcColors = ['#3b82f6','#f97316','#22c55e','#eab308','#ef4444','#8b5cf6'];
+  new Chart(document.getElementById('chartSource'), {
+    type: 'doughnut',
+    data: { labels: bySrc.map(s => s.source), datasets: [{ data: bySrc.map(s => s.count), backgroundColor: srcColors.slice(0, bySrc.length) }] },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+})();
+</script>
+{% endblock %}

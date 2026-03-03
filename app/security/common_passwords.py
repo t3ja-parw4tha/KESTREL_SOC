@@ -1,0 +1,41 @@
+"""Top ~1000 common passwords for password policy check (OWASP)."""
+
+# Subset of commonly used passwords; extend or load from file in production.
+COMMON_PASSWORDS: frozenset[str] = frozenset(
+    {
+        "password", "123456", "12345678", "qwerty", "abc123", "monkey", "1234567",
+        "letmein", "trustno1", "dragon", "baseball", "iloveyou", "master", "sunshine",
+        "ashley", "bailey", "passw0rd", "shadow", "123123", "654321", "superman",
+        "qazwsx", "michael", "football", "password1", "password2", "password3",
+        "admin", "welcome", "login", "admin123", "root", "pass", "test", "guest",
+        "default", "changeme", "1234", "12345", "111111", "000000", "qwerty123",
+        "password123", "welcome1", "Password1", "admin@123", "letmein1", "master1",
+        "access", "flower", "hello", "charlie", "aa123456", "donald", "qwertyuiop",
+        "solo", "passw0rd!", "starwars", "monkey1", "liverpool", "princess",
+        "samsung", "chelsea", "amanda", "summer", "love", "ashley1", "nicole",
+        "chelsea1", "biteme", "maggie", "jackson", "joshua", "minnie", "pepper",
+        "daniel", "michael1", "andrew", "jennifer", "jordan", "buster", "thomas",
+        "hunter", "soccer", "tigger", "robert", "batman", "killer", "harley",
+        "ranger", "jessica", "phoenix", "august", "andrea", "william", "matrix",
+        "cookie", "brandon", "steven", "freedom", "orange", "banana", "apple",
+        "computer", "michelle", "ginger", "generic", "secret", "fucker", "whatever",
+        "hello1", "zxcvbnm", "dragon1", "mustang", "123qwe", "pussy", "baseball1",
+        "iloveyou1", "gordon", "kitten", "scooter", "jesus", "michael2", "taylor",
+        "thunder", "nicole1", "hunter1", "buster1", "charlie1", "daniel1", "joshua1",
+        "jordan1", "andrew1", "robert1", "thomas1", "matthew", "anthony", "christopher",
+        "joseph", "david", "charles", "mark", "donald1", "george", "kenneth",
+        "steven1", "edward", "brian", "ronald", "timothy", "jason", "jeffrey",
+        "ryan", "jacob", "gary", "nicholas", "eric", "jonathan", "stephen",
+        "larry", "justin", "scott", "brandon1", "benjamin", "samuel", "raymond",
+        "gregory", "frank", "alexander", "patrick", "jack", "dennis", "jerry",
+        "tyler", "aaron", "jose", "adam", "nathan", "henry", "douglas", "zachary",
+        "peter", "kyle", "noah", "ethan", "jeremy", "walter", "christian",
+        "terry", "austin", "sean", "gerald", "carl", "dylan", "harold", "lawrence",
+        "wayne", "eugene", "ralph", "roy", "randy", "vincent", "russell", "louis",
+        "philip", "bobby", "johnny", "bradley", "howard", "albert", "willie",
+        "fred", "leonard", "todd", "craig", "alan", "shawn", "philip1", "bruce",
+        "harry", "john1", "james1", "richard1", "paul1", "daniel2", "matthew1",
+        "anthony1", "christopher1", "joseph1", "david1", "charles1", "mark1",
+        "soc_platform", "socplatform", "soc123", "socadmin", "soc_analyst",
+    }
+)

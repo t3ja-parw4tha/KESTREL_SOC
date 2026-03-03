@@ -1,0 +1,1 @@
+"""Notify action (stub)."""

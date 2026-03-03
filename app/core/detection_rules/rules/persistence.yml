@@ -1,0 +1,6 @@
+name: persistence
+description: Detect persistence mechanisms
+mitre:
+  - T1547
+  - T1053
+condition: {}

@@ -1,0 +1,5 @@
+name: port_scan
+description: Detect port scanning
+mitre:
+  - T1046
+condition: {}

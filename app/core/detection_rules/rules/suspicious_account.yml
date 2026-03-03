@@ -1,0 +1,6 @@
+name: suspicious_account
+description: Detect suspicious account activity
+mitre:
+  - T1136
+  - T1098
+condition: {}

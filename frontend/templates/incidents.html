@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Incidents - SOC Platform{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <h1 class="text-2xl font-semibold text-soc-text">Incidents</h1>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for inc in incidents %}
+    <a href="/incidents/{{ inc.incident_id }}" class="rounded-lg border border-soc-border bg-[#181a21] p-4 hover:bg-soc-border/30 block">
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-mono text-sm text-soc-text truncate" title="{{ inc.incident_id }}">{{ inc.incident_id[:12] }}...</span>
+        <span class="rounded px-2 py-0.5 text-xs font-medium text-white" style="background-color:{{ severity_color(inc.highest_severity) }}">{{ inc.highest_severity }}</span>
+      </div>
+      <p class="text-soc-muted text-sm">{{ inc.alert_count }} alerts · Risk {{ inc.max_risk_score or 0 }}</p>
+      <p class="text-soc-muted text-xs mt-1">Asset: {{ inc.asset_id or '-' }}</p>
+    </a>
+    {% else %}
+    <p class="text-soc-muted col-span-full">No incidents.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

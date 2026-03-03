@@ -1,0 +1,1 @@
+"""Defender connector (stub)."""

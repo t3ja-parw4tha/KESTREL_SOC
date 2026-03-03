@@ -1,0 +1,57 @@
+<table class="w-full text-sm">
+  <thead>
+    <tr class="text-left text-soc-muted border-b border-soc-border">
+      <th class="pb-2 pr-2">Severity</th>
+      <th class="pb-2 pr-2">Title</th>
+      <th class="pb-2 pr-2">Source</th>
+      <th class="pb-2 pr-2">Category</th>
+      <th class="pb-2 pr-2">MITRE</th>
+      <th class="pb-2 pr-2">Risk</th>
+      <th class="pb-2 pr-2">Status</th>
+      <th class="pb-2 pr-2">Assigned</th>
+      <th class="pb-2">Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in alerts %}
+    <tr class="border-b border-soc-border/50 hover:bg-soc-border/30 cursor-pointer"
+        onclick="window.location.href='/alerts/{{ a.id }}'">
+      <td class="py-2 pr-2"><span class="rounded px-1.5 py-0.5 text-xs font-medium text-white" style="background-color:{{ severity_color(a.severity.value if a.severity else '') }}">{{ a.severity.value if a.severity else '-' }}</span></td>
+      <td class="py-2 pr-2 text-soc-text">{{ a.title[:60] if a.title else '' }}{% if a.title and a.title|length > 60 %}...{% endif %}</td>
+      <td class="py-2 pr-2 text-soc-muted">{{ a.source }}</td>
+      <td class="py-2 pr-2 text-soc-muted">{{ a.category }}</td>
+      <td class="py-2 pr-2">
+        {% if a.mitre_techniques %}
+          {% set mitre_items = (a.mitre_techniques.get('items') or []) if (a.mitre_techniques is mapping) else (a.mitre_techniques or []) %}
+          {% for t in (mitre_items[:3] if mitre_items else []) %}
+          <span class="inline-block rounded px-1 py-0.5 text-xs bg-soc-border text-soc-muted mr-0.5">{{ t.get('technique_id', '') if t is mapping else t }}</span>
+          {% endfor %}
+          {% if mitre_items and mitre_items|length > 3 %}<span class="text-soc-muted text-xs">+{{ mitre_items|length - 3 }}</span>{% endif %}
+        {% else %}-{% endif %}
+      </td>
+      <td class="py-2 pr-2 text-soc-text">{{ a.risk_score or '-' }}</td>
+      <td class="py-2 pr-2 text-soc-muted">{{ a.status.value if a.status else '-' }}</td>
+      <td class="py-2 pr-2 text-soc-muted">{{ a.assigned_to or '-' }}</td>
+      <td class="py-2 text-soc-muted">{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="py-6 text-soc-muted text-center">No alerts match filters.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if total is defined and limit %}
+  <tfoot>
+    <tr class="border-t border-soc-border">
+      <td colspan="9" class="py-2 text-soc-muted text-sm">
+        Page {{ page }} of {{ ((total + limit - 1) // limit) or 1 }} ({{ total }} total)
+        {% set max_page = ((total + limit - 1) // limit) or 1 %}
+        {% if page > 1 %}
+        <a href="#" class="ml-2 text-blue-400 hover:underline" hx-get="/alerts/table?page={{ page - 1 }}&severity={{ request.query_params.get('severity','') }}&status={{ request.query_params.get('status','') }}&source={{ request.query_params.get('source','') }}&search={{ request.query_params.get('search','') }}&limit={{ limit }}" hx-target="#alerts-table-wrap" hx-swap="innerHTML">Prev</a>
+        {% endif %}
+        {% if page < max_page %}
+        <a href="#" class="ml-2 text-blue-400 hover:underline" hx-get="/alerts/table?page={{ page + 1 }}&severity={{ request.query_params.get('severity','') }}&status={{ request.query_params.get('status','') }}&source={{ request.query_params.get('source','') }}&search={{ request.query_params.get('search','') }}&limit={{ limit }}" hx-target="#alerts-table-wrap" hx-swap="innerHTML">Next</a>
+        {% endif %}
+      </td>
+    </tr>
+  </tfoot>
+  {% endif %}
+</table>

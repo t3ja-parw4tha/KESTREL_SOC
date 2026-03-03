@@ -1,0 +1,5 @@
+name: brute_force
+description: Detect brute force login attempts
+mitre:
+  - T1110
+condition: {}

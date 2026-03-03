@@ -1,0 +1,1 @@
+"""SOC Platform application package."""

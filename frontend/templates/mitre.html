@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}MITRE Coverage - SOC Platform{% endblock %}
+{% block content %}
+<div class="space-y-4" x-data="{ selectedTechnique: null }">
+  <h1 class="text-2xl font-semibold text-soc-text">MITRE ATT&CK Coverage</h1>
+
+  <div class="rounded-lg border border-soc-border bg-[#181a21] p-4 inline-block">
+    <p class="text-soc-muted text-sm"><span class="text-soc-text font-medium">{{ summary.techniques_detected }}</span> techniques covered · <span class="text-soc-text font-medium">{{ summary.coverage_percentage }}%</span> coverage</p>
+  </div>
+
+  <div class="overflow-x-auto">
+    <div class="flex gap-2 min-w-max pb-4">
+      {% for tactic in tactics %}
+      <div class="w-40 shrink-0 rounded-lg border border-soc-border bg-[#181a21] p-2">
+        <p class="text-xs font-semibold text-soc-text mb-2 truncate" title="{{ tactic.name }}">{{ tactic.name }}</p>
+        <div class="space-y-1">
+          {% for tech in tactic.techniques %}
+          <div class="rounded px-2 py-1 text-xs truncate cursor-pointer hover:bg-soc-border"
+               :class="selectedTechnique === '{{ tech.id }}' ? 'ring-1 ring-soc-low' : ''"
+               @click="selectedTechnique = selectedTechnique === '{{ tech.id }}' ? null : '{{ tech.id }}'"
+               title="{{ tech.name }} ({{ tech.alert_count }} alerts)"
+               style="background-color: {% if tech.alert_count > 0 %}rgba(59, 130, 246, {{ [0.2, 0.4, 0.6, 0.8, 1.0][[tech.alert_count, 4]|min] }}){% else %}transparent{% endif %}">
+            <span class="text-soc-muted">{{ tech.id }}</span>
+            <span class="text-soc-text">({{ tech.alert_count }})</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div x-show="selectedTechnique" x-cloak class="rounded-lg border border-soc-border bg-[#181a21] p-4" style="display: none;">
+    <p class="text-soc-muted text-sm">Alerts for selected technique would load here (e.g. via HTMX from /api/v1/mitre/coverage).</p>
+  </div>
+</div>
+{% endblock %}

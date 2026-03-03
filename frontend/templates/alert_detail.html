@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ alert.title[:50] }} - SOC Platform{% endblock %}
+{% block content %}
+<div class="space-y-4" x-data="{ tab: 'overview' }">
+  <div class="flex items-center gap-4 flex-wrap">
+    <a href="/alerts" class="text-soc-muted hover:text-soc-text text-sm">← Alerts</a>
+    <h1 class="text-2xl font-semibold text-soc-text flex-1 min-w-0 truncate">{{ alert.title }}</h1>
+    <span class="rounded px-2 py-1 text-sm font-medium text-white" style="background-color:{{ severity_color(alert.severity.value if alert.severity else '') }}">{{ alert.severity.value if alert.severity else '-' }}</span>
+    <div class="flex items-center gap-2">
+      <span class="text-soc-muted text-sm">Risk</span>
+      <div class="w-24 h-3 rounded-full bg-soc-border overflow-hidden">
+        <div class="h-full rounded-full bg-soc-low" style="width: {{ (alert.risk_score or 0) }}%"></div>
+      </div>
+      <span class="text-soc-text font-medium">{{ alert.risk_score or 0 }}</span>
+    </div>
+    <select class="rounded border border-soc-border bg-soc-bg text-soc-text px-2 py-1 text-sm" onchange="fetch('/api/v1/alerts/{{ alert.id }}', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: this.value }) }).then(() => location.reload())">
+      <option value="open" {% if alert.status and alert.status.value == 'open' %}selected{% endif %}>Open</option>
+      <option value="in_progress" {% if alert.status and alert.status.value == 'in_progress' %}selected{% endif %}>In Progress</option>
+      <option value="resolved" {% if alert.status and alert.status.value == 'resolved' %}selected{% endif %}>Resolved</option>
+      <option value="false_positive" {% if alert.status and alert.status.value == 'false_positive' %}selected{% endif %}>False Positive</option>
+    </select>
+  </div>
+
+  <div class="border-b border-soc-border">
+    <nav class="flex gap-4">
+      <button @click="tab = 'overview'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'overview' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">Overview</button>
+      <button @click="tab = 'ai'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'ai' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">AI Analysis</button>
+      <button @click="tab = 'enrichment'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'enrichment' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">Enrichment</button>
+      <button @click="tab = 'mitre'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'mitre' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">MITRE</button>
+      <button @click="tab = 'timeline'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'timeline' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">Timeline</button>
+      <button @click="tab = 'raw'" class="py-2 px-1 border-b-2 text-sm font-medium" :class="tab === 'raw' ? 'border-soc-low text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'">Raw Log</button>
+    </nav>
+  </div>
+
+  <div class="rounded-lg border border-soc-border bg-[#181a21] p-4 min-h-[200px]">
+    <div x-show="tab === 'overview'">
+      <h3 class="text-sm font-semibold text-soc-text mb-2">Key facts</h3>
+      {% if decision and decision.recommended_actions %}
+        {% set actions = decision.recommended_actions.get('items') if decision.recommended_actions is mapping else (decision.recommended_actions or []) %}
+        <ul class="list-disc list-inside text-soc-muted text-sm space-y-1">
+          {% for a in actions %}<li>{{ a }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-soc-muted text-sm">No key facts.</p>
+      {% endif %}
+      <h3 class="text-sm font-semibold text-soc-text mt-4 mb-2">Affected</h3>
+      <p class="text-soc-muted text-sm">Asset: {{ alert.asset_id or '-' }} | User: {{ alert.user_id or '-' }} | Source IP: {{ alert.source_ip or '-' }}</p>
+    </div>
+
+    <div x-show="tab === 'ai'" x-cloak style="display: none;">
+      <h3 class="text-sm font-semibold text-soc-text mb-2">AI Summary</h3>
+      <p class="text-soc-text text-sm whitespace-pre-wrap">{{ alert.ai_summary or 'No AI summary yet.' }}</p>
+      {% if alert.ai_key_facts %}
+        <h4 class="text-xs font-semibold text-soc-muted mt-4 mb-1">Key facts</h4>
+        <ul class="list-disc list-inside text-soc-muted text-sm">{% for k, v in (alert.ai_key_facts.items() if alert.ai_key_facts is mapping else []) %}<li>{{ k }}: {{ v }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if alert.ai_remediation %}
+        <h4 class="text-xs font-semibold text-soc-muted mt-4 mb-1">Remediation</h4>
+        <p class="text-soc-muted text-sm">{{ alert.ai_remediation }}</p>
+      {% endif %}
+    </div>
+
+    <div x-show="tab === 'enrichment'" x-cloak style="display: none;">
+      {% set enr = alert.enrichment or {} %}
+      <h3 class="text-sm font-semibold text-soc-text mb-2">IOCs</h3>
+      {% set iocs = enr.get('iocs') or {} %}
+      <p class="text-soc-muted text-sm">IPs: {{ (iocs.get('ips') or []) | join(', ') or '-' }} | Domains: {{ (iocs.get('domains') or []) | join(', ') or '-' }} | CVEs: {{ (iocs.get('cves') or []) | join(', ') or '-' }}</p>
+      <h3 class="text-sm font-semibold text-soc-text mt-4 mb-2">VirusTotal</h3>
+      <p class="text-soc-muted text-sm">{% for r in (enr.get('vt_results') or []) %}{{ r.get('indicator') }}: {{ r.get('malicious_count', 0) }}/{{ r.get('total_engines', 0) }} | {% endfor %}{% if not (enr.get('vt_results')) %}No VT results.{% endif %}</p>
+      <h3 class="text-sm font-semibold text-soc-text mt-4 mb-2">AbuseIPDB</h3>
+      <p class="text-soc-muted text-sm">{% for r in (enr.get('abuse_results') or []) %}{{ r.get('ip') }}: score {{ r.get('abuse_score', 0) }} | {% endfor %}{% if not (enr.get('abuse_results')) %}No AbuseIPDB results.{% endif %}</p>
+      <h3 class="text-sm font-semibold text-soc-text mt-4 mb-2">Feed matches</h3>
+      <p class="text-soc-muted text-sm">{% for m in (enr.get('feed_matches') or []) %}{{ m.get('indicator') }} ({{ m.get('feed_name') }}) | {% endfor %}{% if not (enr.get('feed_matches')) %}None.{% endif %}</p>
+    </div>
+
+    <div x-show="tab === 'mitre'" x-cloak style="display: none;">
+      {% set mitre_list = (alert.mitre_techniques.get('items') or []) if (alert.mitre_techniques is mapping) else (alert.mitre_techniques or []) %}
+      {% for t in (mitre_list or []) %}
+      <div class="rounded border border-soc-border p-3 mb-2">
+        <span class="font-mono text-soc-low">{{ t.get('technique_id', '') }}</span>
+        <span class="font-semibold text-soc-text ml-2">{{ t.get('technique_name', '') }}</span>
+        <p class="text-soc-muted text-sm mt-1">{{ t.get('description', t.get('tactic', '')) }}</p>
+      </div>
+      {% else %}
+      <p class="text-soc-muted text-sm">No MITRE techniques.</p>
+      {% endfor %}
+    </div>
+
+    <div x-show="tab === 'timeline'" x-cloak style="display: none;">
+      <p class="text-soc-muted text-sm">Load timeline via API /alerts/{{ alert.id }}/timeline</p>
+    </div>
+
+    <div x-show="tab === 'raw'" x-cloak style="display: none;">
+      <pre class="text-xs text-soc-muted overflow-auto max-h-[400px] bg-soc-bg p-3 rounded">{{ (alert.raw or {}) | tojson(indent=2) }}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
