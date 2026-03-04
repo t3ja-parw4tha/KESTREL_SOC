@@ -278,6 +278,12 @@ typing-inspection==0.4.2
     # via
     #   -c requirements/base.txt
     #   pydantic
+types-bleach==6.3.0.20251115
+    # via -r requirements/dev.in
+types-passlib==1.7.7.20260211
+    # via -r requirements/dev.in
+types-python-jose==3.5.0.20250531
+    # via -r requirements/dev.in
 urllib3==2.6.3
     # via requests
 virtualenv==21.1.0
