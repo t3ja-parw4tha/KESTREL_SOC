@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources
+from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources, settings as settings_router
 from app.api.health import set_start_time
 from app.config import get_settings
 from app.database import Base, engine
@@ -97,7 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(mitre.router, prefix="/api/v1")
     app.include_router(sources.router, prefix="/api/v1")
     app.include_router(audit.router, prefix="/api/v1")
-    app.include_router(settings.router, prefix="/api/v1")
+    app.include_router(settings_router.router, prefix="/api/v1")
     app.include_router(health.router)
     app.include_router(security_dashboard.router, prefix="/api/v1")
     app.include_router(pages.router)

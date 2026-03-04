@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.config import get_settings
 from app.enrichment.abuseipdb import AbuseIPDBClient, AbuseResult
@@ -51,7 +52,7 @@ class EnrichmentOrchestrator:
         feed_matches: list[FeedMatch] = []
         risk_modifier = 0
 
-        ip_tasks = []
+        ip_tasks: list[Any] = []
         if self._vt:
             for ip in iocs.ips:
                 ip_tasks.append(self._vt.lookup_ip(ip))

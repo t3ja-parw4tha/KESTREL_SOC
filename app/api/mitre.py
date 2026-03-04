@@ -83,15 +83,15 @@ async def get_mitre_coverage(
         if isinstance(row, list):
             for t in row:
                 if isinstance(t, dict):
-                    tid = t.get("technique_id")
-                    if tid:
-                        technique_counts[tid] = technique_counts.get(tid, 0) + 1
+                    tech_id = t.get("technique_id")
+                    if tech_id and isinstance(tech_id, str):
+                        technique_counts[tech_id] = technique_counts.get(tech_id, 0) + 1
         elif isinstance(row, dict) and "items" in row:
             for t in row.get("items") or []:
                 if isinstance(t, dict):
-                    tid = t.get("technique_id")
-                    if tid:
-                        technique_counts[tid] = technique_counts.get(tid, 0) + 1
+                    tech_id = t.get("technique_id")
+                    if tech_id and isinstance(tech_id, str):
+                        technique_counts[tech_id] = technique_counts.get(tech_id, 0) + 1
 
     for t in techniques_out:
         t["alert_count"] = technique_counts.get(t["id"], 0)

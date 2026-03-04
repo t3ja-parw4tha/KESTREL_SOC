@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Query
 from fastapi.responses import HTMLResponse
@@ -352,7 +353,7 @@ async def mitre_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    technique_counts = {}
+    technique_counts: dict[str, int] = {}
     result = await db.execute(select(Alert.mitre_techniques).where(Alert.mitre_techniques.is_not(None)))
     for row in result.scalars().all():
         items = row if isinstance(row, list) else (row.get("items") or []) if isinstance(row, dict) else []
@@ -360,7 +361,7 @@ async def mitre_page(
             if isinstance(t, dict) and t.get("technique_id"):
                 tid = t["technique_id"]
                 technique_counts[tid] = technique_counts.get(tid, 0) + 1
-    tactic_techniques = {}
+    tactic_techniques: dict[str, dict[str, Any]] = {}
     for t in TACTICS_LIST:
         tactic_techniques[t["id"]] = {"id": t["id"], "name": t["name"], "techniques": []}
     for tid, entry in TECHNIQUES.items():

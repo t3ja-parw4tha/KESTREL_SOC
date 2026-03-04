@@ -140,16 +140,16 @@ async def ingest_events(
 
             # MITRE mapping
             mitre_objs = map_alert_to_techniques(normalized)
-            mitre_dicts = [
+            mitre_dicts: list[dict[str, object]] = [
                 {
                     "technique_id": t.technique_id,
                     "technique_name": t.technique_name,
                     "tactic": t.tactic,
-                    "subtechniques": t.subtechniques,
+                    "subtechniques": list(t.subtechniques),
                 }
                 for t in mitre_objs
             ]
-            normalized.mitre_techniques = mitre_dicts
+            normalized.mitre_techniques = mitre_dicts  # type: ignore[assignment]
 
             # Decision engine
             decision_input = DecisionInput(
