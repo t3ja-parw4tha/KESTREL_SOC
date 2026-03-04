@@ -66,3 +66,10 @@ logs/
 
 # Docker
 .docker/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Repomix (generated)
+repomix-output.xml
