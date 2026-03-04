@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 import uuid
-from app.models import AuditLog, User
+from app.models import AuditLog
 from app.security.auth import verify_token, blocklist_check
 from app.security.exceptions import SecurityError
 

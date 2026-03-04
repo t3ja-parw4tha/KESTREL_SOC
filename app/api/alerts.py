@@ -314,13 +314,13 @@ async def get_alert_timeline(
                 details=row.details,
             )
         )
-    for row in dec_rows:
+    for dec_row in dec_rows:
         items.append(
             TimelineItem(
                 action="decision",
-                timestamp=row.generated_at.isoformat() if getattr(row, "generated_at", None) else "",
+                timestamp=dec_row.generated_at.isoformat() if getattr(dec_row, "generated_at", None) else "",
                 analyst=None,
-                details={"risk_score": row.risk_score, "risk_level": row.risk_level},
+                details={"risk_score": dec_row.risk_score, "risk_level": dec_row.risk_level},
             )
         )
     items.sort(key=lambda x: x.timestamp)

@@ -37,11 +37,12 @@ class DecisionRunResponse(BaseModel):
 
 
 def _alert_to_normalized(alert: Alert) -> NormalizedAlert:
-    mitre_list = alert.mitre_techniques
-    if isinstance(mitre_list, dict) and "items" in mitre_list:
-        mitre_list = mitre_list["items"]
-    elif not isinstance(mitre_list, list):
-        mitre_list = []
+    raw_mitre = alert.mitre_techniques
+    mitre_list: list[dict[str, str]] = []
+    if isinstance(raw_mitre, dict) and "items" in raw_mitre:
+        mitre_list = raw_mitre["items"] or []
+    elif isinstance(raw_mitre, list):
+        mitre_list = raw_mitre
     return NormalizedAlert(
         id=alert.id,
         title=alert.title,
@@ -115,7 +116,7 @@ async def run_decision(
     alert.incident_group_id = output.incident_group_id
     alert.correlated_alert_ids = {"ids": output.correlated_alert_ids} if output.correlated_alert_ids else None
     if output.mitre_techniques:
-        alert.mitre_techniques = output.mitre_techniques
+        alert.mitre_techniques = output.mitre_techniques  # type: ignore[assignment]
     await db.flush()
 
     return DecisionRunResponse(

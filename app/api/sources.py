@@ -25,7 +25,7 @@ async def list_sources(
                 return False
         return True
 
-    sources = [
+    sources: list[dict[str, object]] = [
         {
             "id": "sentinel",
             "name": "Microsoft Sentinel",
@@ -107,7 +107,7 @@ async def list_sources(
         },
     ]
 
-    configured_count = sum(1 for s in sources if s["status"] == "connected")
+    configured_count = sum(1 for s in sources if s.get("status") == "connected")
 
     return {
         "items": sources,

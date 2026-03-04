@@ -1,9 +1,8 @@
-from app.core.parsers import get_parser, parse_event
+from app.core.parsers import parse_event
 from app.core.parsers.guardduty import GuardDutyParser
 from app.core.parsers.sentinel import SentinelParser
 from app.core.parsers.suricata import SuricataParser
 from app.core.parsers.windows_event import WindowsEventParser
-from app.core.parsers.defender import DefenderParser
 
 
 # Sentinel tests

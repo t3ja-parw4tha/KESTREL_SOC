@@ -75,7 +75,6 @@ async def list_incidents(
         gid = a.incident_group_id or ""
         alerts_by_incident.setdefault(gid, []).append(a)
 
-    score_by_id = {row.incident_group_id: (row.max_score or 0) for row in rows}
     items = []
     for row in rows:
         gid = row.incident_group_id
@@ -139,16 +138,16 @@ async def get_incident(
         .order_by(AlertDecision.alert_id, AlertDecision.generated_at.desc())
     )
     all_decisions = dec_r.scalars().all()
-    latest_decision: dict[str, AlertDecision] = {}
+    latest_decision: dict[str, AlertDecision | None] = {}
     for dec in all_decisions:
         if dec.alert_id not in latest_decision:
             latest_decision[dec.alert_id] = dec
 
     recommended: list[str] = []
     for a in alerts:
-        dec = latest_decision.get(a.id)
-        if dec and dec.recommended_actions:
-            ra = dec.recommended_actions
+        adec = latest_decision.get(a.id)
+        if adec and adec.recommended_actions:
+            ra = adec.recommended_actions
             if isinstance(ra, list):
                 recommended.extend(ra)
             elif isinstance(ra, dict) and "items" in ra:
