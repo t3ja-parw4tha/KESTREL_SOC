@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from app.core.parsers.base import BaseParser, ParsedEvent, parse_timestamp

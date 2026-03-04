@@ -75,7 +75,6 @@ async def list_incidents(
         gid = a.incident_group_id or ""
         alerts_by_incident.setdefault(gid, []).append(a)
 
-    score_by_id = {row.incident_group_id: (row.max_score or 0) for row in rows}
     items = []
     for row in rows:
         gid = row.incident_group_id

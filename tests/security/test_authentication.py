@@ -48,7 +48,7 @@ async def test_brute_force_lockout_behavior():
 
 
 async def test_password_policy_enforced():
-  from app.security.auth import validate_password_policy, SecurityError  # type: ignore[attr-defined]
+  from app.security.auth import validate_password_policy  # type: ignore[attr-defined]
 
   weak = "short"
   with pytest.raises(Exception):

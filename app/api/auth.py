@@ -36,9 +36,7 @@ from app.security.auth import (
     get_recent_failure_count,
     create_session,
     get_user_sessions,
-    revoke_session_by_id,
     generate_api_key,
-    hash_api_key,
 )
 from app.security.rbac import get_current_user, require_permission, get_role_permissions
 from app.security.exceptions import SecurityError
@@ -49,7 +47,6 @@ REFRESH_COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 days
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
-    settings = get_settings()
     response.set_cookie(
         key=REFRESH_TOKEN_COOKIE,
         value=token,

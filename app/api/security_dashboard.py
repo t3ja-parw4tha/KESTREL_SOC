@@ -30,7 +30,7 @@ async def security_status():
 
     # Optional: load from CI-written reports under repo root (e.g. in a mounted volume)
     pip_audit = _load_report_json("pip-audit-report")
-    safety = _load_report_json("safety-report")
+    _load_report_json("safety-report")  # loaded for future use
     bandit = _load_report_json("bandit-report")
     semgrep = _load_report_json("semgrep-report")
     npm_audit = _load_report_json("frontend/npm-audit-report")

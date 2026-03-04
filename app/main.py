@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources, settings
+from app.api import alerts, audit, auth, decisions, health, ai, incidents, ingest, mitre, pages, security_dashboard, sources
 from app.api.health import set_start_time
 from app.config import get_settings
 from app.database import Base, engine

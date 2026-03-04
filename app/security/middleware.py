@@ -17,7 +17,6 @@ from typing import Callable
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 from app.config import get_settings
 from app.security.sanitization import sanitize_for_log
@@ -269,20 +268,8 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         from app.security.exceptions import SecurityError
 
         start = time.perf_counter()
-        request_size = 0
-        content_length = request.headers.get("Content-Length")
-        if content_length:
-            try:
-                request_size = int(content_length)
-            except ValueError:
-                pass
-
         response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
-        response_size = 0
-        if hasattr(response, "body") and response.body:
-            response_size = len(response.body)
-        # StreamingResponse has body_iterator; we don't capture length
 
         real_ip = get_real_ip(request)
         path = sanitize_for_log(request.url.path or "")
