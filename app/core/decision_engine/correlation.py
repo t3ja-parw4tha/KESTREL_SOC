@@ -1,7 +1,7 @@
 """Alert correlation for incident grouping."""
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import NamedTuple
 
 from app.core.decision_engine.types import NormalizedAlert

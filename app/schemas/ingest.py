@@ -5,7 +5,6 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.security.sanitization import sanitize_json
 
 ALLOWED_INGEST_SOURCES = frozenset(
     {

@@ -8,7 +8,6 @@ Sensitive data protection: field-level encryption, retention policy, PII detecti
 
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Any
 
 # Retention (days)
 RAW_LOG_RETENTION_DAYS = 90
@@ -82,7 +81,6 @@ def should_anonymize_resolved_alert(resolved_at: datetime | None) -> bool:
 def _get_fernet_key() -> bytes:
     """Load encryption key from env (e.g. FIELD_ENCRYPTION_KEY). Key must be base64 Fernet key."""
     import os
-    from app.security.crypto import create_fernet_key
     key = os.getenv("FIELD_ENCRYPTION_KEY")
     if not key:
         raise RuntimeError("FIELD_ENCRYPTION_KEY not set; cannot encrypt sensitive fields")

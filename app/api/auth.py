@@ -36,9 +36,7 @@ from app.security.auth import (
     get_recent_failure_count,
     create_session,
     get_user_sessions,
-    revoke_session_by_id,
     generate_api_key,
-    hash_api_key,
 )
 from app.security.rbac import get_current_user, require_permission, get_role_permissions
 from app.security.exceptions import SecurityError
@@ -49,7 +47,6 @@ REFRESH_COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 days
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
-    settings = get_settings()
     response.set_cookie(
         key=REFRESH_TOKEN_COOKIE,
         value=token,
@@ -228,7 +225,7 @@ async def refresh(
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
-    jti = payload.get("jti")
+    jti = payload.get("jti") or ""
     if await blocklist_check(db, jti):
         _clear_refresh_cookie(response)
         raise HTTPException(status_code=401, detail="Token revoked")

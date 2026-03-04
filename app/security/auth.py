@@ -5,7 +5,6 @@ OWASP Authentication guidelines: asymmetric JWT, strong passwords, account locko
 session limits, refresh rotation.
 """
 
-import asyncio
 import hashlib
 import logging
 import re
@@ -22,7 +21,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
 
 from app.config import get_settings
-from app.models import ApiKey, FailedLogin, Session, TokenBlocklist, User
+from app.models import ApiKey, FailedLogin, Session, TokenBlocklist
 from app.security.common_passwords import COMMON_PASSWORDS
 from app.security.exceptions import SecurityError
 

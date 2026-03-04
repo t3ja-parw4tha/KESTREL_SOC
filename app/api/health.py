@@ -10,7 +10,6 @@ from app.config import get_settings
 from app.database import engine
 from app.models import Alert
 from app.observability.health import (
-    ComponentHealth,
     HealthStatus,
     check_ai_provider,
     check_database,
@@ -74,7 +73,6 @@ async def health_ready():
     """
     import time
     settings = get_settings()
-    now = datetime.now(timezone.utc)
     uptime = (time.time() - _start_time) if _start_time else 0
 
     # Run component checks

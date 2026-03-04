@@ -3,7 +3,6 @@
 import asyncio
 import os
 
-import pytest
 
 from app.enrichment.ioc_extractor import IOCExtractor
 

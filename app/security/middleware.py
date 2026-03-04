@@ -17,7 +17,6 @@ from typing import Callable
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 from app.config import get_settings
 from app.security.sanitization import sanitize_for_log
@@ -183,12 +182,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 )
 
                 bucket_key = f"{key}:{tier}"
-                stmt = select(RateLimitBucket).where(
+                bucket_stmt = select(RateLimitBucket).where(
                     RateLimitBucket.key == bucket_key,
                     RateLimitBucket.window_start == window_start,
                 )
-                result = await db.execute(stmt)
-                bucket = result.scalar_one_or_none()
+                bucket_result = await db.execute(bucket_stmt)
+                bucket = bucket_result.scalar_one_or_none()
                 if not bucket:
                     await db.execute(delete(RateLimitBucket).where(RateLimitBucket.key == bucket_key))
                     bucket = RateLimitBucket(key=bucket_key, tier=tier, window_start=window_start, count=0)
@@ -269,19 +268,9 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         from app.security.exceptions import SecurityError
 
         start = time.perf_counter()
-        request_size = 0
-        content_length = request.headers.get("Content-Length")
-        if content_length:
-            try:
-                request_size = int(content_length)
-            except ValueError:
-                pass
 
         response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
-        response_size = 0
-        if hasattr(response, "body") and response.body:
-            response_size = len(response.body)
         # StreamingResponse has body_iterator; we don't capture length
 
         real_ip = get_real_ip(request)
