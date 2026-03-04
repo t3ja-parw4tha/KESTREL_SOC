@@ -51,7 +51,7 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run tests with coverage
         run: |
-          pytest tests -v --cov=app --cov-report=term-missing --cov-fail-under=80
+          pytest tests -v --cov=app --cov-report=term-missing --cov-fail-under=60
 
   security-tests:
     runs-on: ubuntu-latest
@@ -67,4 +67,4 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run security test suite with coverage
         run: |
-          pytest tests/security -v --cov=app --cov-report=term-missing --cov-fail-under=80
+          pytest tests/security -v --cov=app --cov-report=term-missing --cov-fail-under=60

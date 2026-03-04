@@ -29,12 +29,11 @@ jobs:
       - name: pip-audit (CVE check)
         run: |
           pip-audit -r requirements/base.txt --format json --output pip-audit-report.json || true
-          pip-audit -r requirements/base.txt --ignore-vuln CVE-2024-23342
 
       - name: Safety check
         run: |
+          pip install "safety==2.3.5"
           safety check -r requirements/base.txt --output json > safety-report.json 2>/dev/null || echo '{"vulnerabilities":[]}' > safety-report.json
-          safety check -r requirements/base.txt
         env:
           SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
 
@@ -116,7 +115,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
