@@ -157,7 +157,7 @@ prometheus-client==0.24.1
     #   prometheus-fastapi-instrumentator
 prometheus-fastapi-instrumentator==7.1.0
     # via -r requirements/base.in
-protobuf==4.25.8
+protobuf==5.29.6
     # via googleapis-common-protos
 pyasn1==0.6.2
     # via
