@@ -1,7 +1,7 @@
 """
 Cryptographic standards: never use MD5/SHA1 for security, random(), ECB, DES, weak RSA.
 
-- Password hashing: bcrypt cost 12
+- Password hashing: argon2id (argon2-cffi)
 - Tokens: secrets.token_urlsafe(32) minimum
 - IDs: UUID4 (no sequential enumeration)
 - Checksums: SHA256 only

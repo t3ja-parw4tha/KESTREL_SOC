@@ -35,8 +35,16 @@ export interface FeedMatch {
   source?: string
 }
 
+export interface IocGroup {
+  ips: string[]
+  domains: string[]
+  hashes: string[]
+  cves: string[]
+}
+
 export interface Enrichment {
-  iocs_found: string[]
+  /** Structured IOC groups written by the backend enrichment pipeline. */
+  iocs: IocGroup
   vt_results: VTResult[]
   abuse_results: AbuseResult[]
   feed_matches: FeedMatch[]
@@ -68,9 +76,9 @@ export interface Alert {
   confidence: number | null
   incident_group_id: string | null
   ai_summary: string | null
-  ai_key_facts: string[] | null
-  ai_remediation: string[] | null
-  ai_next_steps: string[] | null
+  ai_key_facts: Record<string, unknown> | null
+  ai_remediation: Record<string, unknown> | null
+  ai_next_steps: Record<string, unknown> | null
   enrichment: Enrichment | null
   created_at: string
   updated_at: string
@@ -82,6 +90,7 @@ export interface Alert {
     explanation?: { items?: string[] }
     recommended_actions?: { items?: string[] }
     mitre_techniques?: unknown
+    correlation_rule_triggered?: string | null
   }
 }
 
@@ -98,6 +107,9 @@ export interface AlertFiltersParams {
   source?: string
   category?: string
   search?: string
+  assigned_to?: string
+  date_from?: string
+  date_to?: string
   page?: number
   limit?: number
 }

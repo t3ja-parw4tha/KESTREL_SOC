@@ -16,7 +16,7 @@ export function TopIncidents({ incidents, loading }: TopIncidentsProps) {
 
   return (
     <Card>
-      <CardHeader title="Top incidents (by risk)" action={<a href="/incidents" className="text-sm text-blue-400 hover:underline">View all</a>} />
+      <CardHeader title="Top incidents (by risk)" action={<a href="/app/incidents" className="text-sm text-blue-400 hover:underline">View all</a>} />
       {loading && (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -33,7 +33,7 @@ export function TopIncidents({ incidents, loading }: TopIncidentsProps) {
             <li
               key={inc.incident_id}
               className="flex items-center justify-between rounded-lg border border-soc-border p-3 hover:bg-soc-border/20 cursor-pointer transition-colors"
-              onClick={() => navigate(`/incidents/${inc.incident_id}`)}
+              onClick={() => navigate(`/app/incidents/${inc.incident_id}`)}
             >
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-sm text-soc-text truncate" title={inc.incident_id}>

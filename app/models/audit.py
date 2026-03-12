@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, Integer, String
-from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 

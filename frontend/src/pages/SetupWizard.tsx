@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 
 export function SetupWizard() {
@@ -82,8 +82,15 @@ export function SetupWizard() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-soc-bg">
-      <div className="w-full max-w-md p-8 rounded-xl border border-soc-border bg-soc-surface shadow-xl">
+    <div className="min-h-screen flex items-center justify-center bg-soc-bg p-4">
+      <div className="w-full max-w-md">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-2 text-soc-muted hover:text-soc-text text-sm mb-4 transition-colors"
+        >
+          ← Back to home
+        </Link>
+        <div className="p-8 rounded-xl border border-soc-border bg-soc-surface shadow-xl">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
             <span className="text-white font-bold text-sm">K</span>
@@ -211,6 +218,7 @@ export function SetupWizard() {
             </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   )

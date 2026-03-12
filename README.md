@@ -86,8 +86,8 @@ KESTREL is an open-source AI-assisted SOC platform built for security analysts. 
 ### 1. Clone and set up Python environment
 
 ```bash
-git clone https://github.com/t3ja-parw4tha/KESTREL.git
-cd KESTREL
+git clone https://github.com/t3ja-parw4tha/KESTREL_SOC.git
+cd KESTREL_SOC
 
 python -m venv .venv
 
@@ -143,7 +143,7 @@ npm run dev
 
 Go to `http://localhost:5173`
 
-On first launch, KESTREL automatically redirects to the **Setup Wizard** where you create your admin account and optionally configure an AI provider — all in the browser.
+You’ll see the **landing page**. Use **Get started** to run the first-time **Setup Wizard** (create admin account, optional AI provider), or **Sign in** if you’ve already set up. On first launch with no admin account, visiting the app will redirect you to the Setup Wizard.
 
 ---
 

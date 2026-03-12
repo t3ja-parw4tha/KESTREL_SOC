@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = SecretStr("")
     azure_openai_api_key: SecretStr = SecretStr("")
     azure_openai_endpoint: str = ""
+    azure_openai_deployment: str = ""
 
     # Azure / Microsoft Sentinel
     azure_tenant_id: str = ""
@@ -62,7 +63,7 @@ class Settings(BaseSettings):
     alert_email_to: str = ""
 
     # Security / CORS
-    allowed_origins: str = "http://localhost:3000,http://localhost:8000"
+    allowed_origins: str = "http://localhost:3000,http://localhost:5173,http://localhost:8000"
     max_request_body_bytes: int = 10 * 1024 * 1024  # 10MB
     max_url_length: int = 2048
     max_header_value_bytes: int = 8192
@@ -75,7 +76,6 @@ class Settings(BaseSettings):
     absolute_session_timeout_hours: int = 8
     lockout_attempts: int = 5
     lockout_minutes: int = 15
-    bcrypt_rounds: int = 12
     api_key_grace_hours: int = 24
 
     @model_validator(mode="after")

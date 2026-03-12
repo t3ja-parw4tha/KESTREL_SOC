@@ -4,6 +4,7 @@ import { IncidentCard } from '@/components/incidents/IncidentCard'
 import { SpinnerOverlay } from '@/components/ui/Spinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { Breadcrumb } from '@/components/ui/Breadcrumb'
 import type { Incident } from '@/types/incident'
 
 type SortBy = 'risk' | 'alerts' | 'recent'
@@ -24,6 +25,7 @@ export function Incidents() {
 
   return (
     <div className="space-y-6">
+      <Breadcrumb items={[{ label: 'Home', to: '/app' }, { label: 'Incidents' }]} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-soc-text">Active Incidents</h1>
         <div className="flex items-center gap-2">

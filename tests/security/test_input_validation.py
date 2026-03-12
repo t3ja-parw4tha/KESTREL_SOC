@@ -65,7 +65,7 @@ async def test_xss_in_raw_payload_sanitized_before_storage():
   client = await _authed_client()
   try:
     payload = {
-      "source": "UnknownSource",
+      "source": "Sentinel",
       "events": [
         {
           "severity": "Low",

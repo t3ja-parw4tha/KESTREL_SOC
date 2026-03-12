@@ -56,7 +56,7 @@ export function IncidentDetail() {
         <ArrowLeft className="w-4 h-4" /> Back
       </button>
       <nav className="flex items-center gap-2 text-sm text-soc-muted">
-        <Link to="/incidents" className="hover:text-soc-text">Incidents</Link>
+        <Link to="/app/incidents" className="hover:text-soc-text">Incidents</Link>
         <span className="text-soc-text font-mono">{incident.incident_id}</span>
       </nav>
       <div className="flex flex-wrap items-start justify-between gap-4">

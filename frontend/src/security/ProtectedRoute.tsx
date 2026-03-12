@@ -22,7 +22,11 @@ export function ProtectedRoute({ children, allowedRoles = [] }: ProtectedRoutePr
 
   // Wait until AuthProvider has checked sessionStorage before deciding.
   if (!hydrated) {
-    return null
+    return (
+      <div className="min-h-screen bg-soc-bg flex items-center justify-center">
+        <div className="text-soc-muted">Loading...</div>
+      </div>
+    )
   }
 
   if (!isAuthenticated || !user) {
@@ -47,7 +51,7 @@ export function ProtectedRoute({ children, allowedRoles = [] }: ProtectedRoutePr
         // no-op
       }
     }
-    return <Navigate to="/" replace />
+    return <Navigate to="/app" replace />
   }
 
   return <>{children}</>

@@ -67,11 +67,20 @@ from app.security.exceptions import SecurityError
 
 # Role hierarchy: each role has its own permissions (senior includes analyst conceptually in UI).
 PERMISSIONS: dict[str, list[str]] = {
+    "viewer": [
+        # Read-only across the platform — no writes, no AI, no ingest.
+        "dashboard:read",
+        "alerts:read",
+        "incidents:read",
+        "mitre:read",
+    ],
     "analyst": [
         "alerts:read",
         "alerts:write",
         "alerts:update_status",
+        "alerts:bulk_update",  # Bulk status/self-assign only
         "alerts:comment",
+        "alerts:pick_up",   # Assign to self only (pick up unassigned alerts)
         "incidents:read",
         "ingest:write",
         "mitre:read",
@@ -82,8 +91,10 @@ PERMISSIONS: dict[str, list[str]] = {
         "alerts:read",
         "alerts:write",
         "alerts:update_status",
+        "alerts:bulk_update",
         "alerts:comment",
-        "alerts:assign",
+        "alerts:pick_up",   # Can also pick up
+        "alerts:assign",    # Can assign to others / reassign
         "incidents:read",
         "mitre:read",
         "ai:generate",
@@ -97,7 +108,9 @@ PERMISSIONS: dict[str, list[str]] = {
         "alerts:read",
         "alerts:write",
         "alerts:update_status",
+        "alerts:bulk_update",
         "alerts:comment",
+        "alerts:pick_up",
         "alerts:assign",
         "alerts:delete",
         "incidents:read",

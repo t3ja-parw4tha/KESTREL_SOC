@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.decision_engine.engine import run_decision_engine
-from app.core.decision_engine.types import DecisionInput
-from app.core.mitre.mapping import map_alert_to_techniques
-from app.core.parsers import parse_event
-from sqlalchemy import select
-
+from app.core.ingest import process_events
 from app.database import SessionLocal, get_db
 from app.enrichment import EnrichmentOrchestrator
-from app.models import Alert, AlertDecision
-from app.models.alert import AlertSeverity, AlertStatus
+from app.models import Alert
 from app.observability.log_sanitizer import sanitize_for_log
-from app.observability.metrics import ALERTS_INGESTED
 from app.schemas.ingest import IngestResponseSchema, IngestSchema
 from app.security.exceptions import SecurityError
 from app.security.rbac import require_permission
@@ -28,6 +21,34 @@ from app.security.sanitization import sanitize_json, sanitize_log_data
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 log = structlog.get_logger(__name__)
+
+
+async def _enqueue_notifications(alert_ids: list[str]) -> None:
+    """Send Slack/email for critical/high alerts (background)."""
+    if not alert_ids:
+        return
+    from app.notifications.dispatcher import notify_new_alert
+
+    async with SessionLocal() as db:
+        for alert_id in alert_ids:
+            try:
+                r = await db.execute(select(Alert).where(Alert.id == alert_id))
+                alert = r.scalar_one_or_none()
+                if not alert:
+                    continue
+                severity = alert.severity.value if alert.severity else ""
+                if severity not in ("Critical", "High"):
+                    continue
+                payload = {
+                    "id": alert.id,
+                    "title": alert.title or "",
+                    "severity": severity,
+                    "source": alert.source or "",
+                    "ai_summary": alert.ai_summary or "",
+                }
+                await notify_new_alert(payload)
+            except Exception as e:
+                log.warning("notification.error", alert_id=alert_id, error=str(e))
 
 
 async def _enqueue_enrichment(alert_ids: list[str]) -> None:
@@ -128,110 +149,15 @@ async def ingest_events(
     event_count = len(parsed.events)
     log.info("alert.received", source=source, event_count=event_count)
 
-    ingested_ids: list[str] = []
-    errors: list[str] = []
-
-    for idx, raw_event in enumerate(parsed.events):
-        try:
-            sanitized_event = sanitize_log_data(raw_event)
-
-            # Normalize to decision engine alert
-            normalized = parse_event(parsed.source, sanitized_event)
-
-            # MITRE mapping
-            mitre_objs = map_alert_to_techniques(normalized)
-            mitre_dicts: list[dict[str, object]] = [
-                {
-                    "technique_id": t.technique_id,
-                    "technique_name": t.technique_name,
-                    "tactic": t.tactic,
-                    "subtechniques": list(t.subtechniques),
-                }
-                for t in mitre_objs
-            ]
-            normalized.mitre_techniques = mitre_dicts  # type: ignore[assignment]
-
-            # Decision engine
-            decision_input = DecisionInput(
-                alert=normalized,
-                asset=None,
-                threat=None,
-                history=None,
-            )
-            decision_output = run_decision_engine(decision_input, recent_alerts=[])
-
-            # Persist alert (enrichment populated by background _enqueue_enrichment)
-            alert_id = normalized.id or str(uuid.uuid4())
-            try:
-                severity_enum = AlertSeverity(normalized.severity)
-            except ValueError:
-                severity_enum = AlertSeverity.HIGH
-            db_alert = Alert(
-                id=alert_id,
-                title=normalized.title[:512],
-                source=normalized.source,
-                severity=severity_enum,
-                category=normalized.category,
-                status=AlertStatus.OPEN,
-                asset_id=normalized.asset_id,
-                user_id=normalized.user_id,
-                source_ip=normalized.source_ip,
-                 dest_ip=getattr(normalized, "dest_ip", None),
-                mitre_techniques=mitre_dicts,
-                raw=normalized.raw,
-                enrichment={},
-                risk_score=decision_output.risk_score,
-                risk_level=decision_output.risk_level,
-                confidence=decision_output.confidence,
-                incident_group_id=decision_output.incident_group_id,
-                correlated_alert_ids={
-                    "ids": decision_output.correlated_alert_ids
-                }
-                if decision_output.correlated_alert_ids
-                else None,
-            )
-            db.add(db_alert)
-
-            # Persist decision
-            db_decision = AlertDecision(
-                id=str(uuid.uuid4()),
-                alert_id=alert_id,
-                risk_score=decision_output.risk_score,
-                risk_level=decision_output.risk_level,
-                confidence=decision_output.confidence,
-                explanation={"items": decision_output.explanation},
-                recommended_actions={"items": decision_output.recommended_actions},
-                mitre_techniques={"items": mitre_dicts},
-                correlated_alert_ids={
-                    "ids": decision_output.correlated_alert_ids
-                }
-                if decision_output.correlated_alert_ids
-                else None,
-                incident_group_id=decision_output.incident_group_id,
-                engine_version=decision_output.engine_version,
-            )
-            db.add(db_decision)
-
-            ingested_ids.append(alert_id)
-            ALERTS_INGESTED.labels(
-                source=normalized.source,
-                severity=normalized.severity,
-                category=normalized.category,
-            ).inc()
-
-            log.info(
-                "alert.decision_complete",
-                source=source,
-                risk_score=decision_output.risk_score,
-                risk_level=decision_output.risk_level,
-            )
-        except Exception as e:  # pragma: no cover - best-effort per-event error capture
-            msg = f"Failed to ingest event index={idx}: {e}"
-            log.warning("alert.ingest_error", source=source, error=str(e))
-            errors.append(msg)
+    try:
+        ingested_ids, errors = await process_events(db, parsed.source, parsed.events)
+    except Exception as e:
+        log.warning("alert.ingest_error", source=source, error=str(e))
+        raise HTTPException(status_code=500, detail="Ingest processing failed") from e
 
     if ingested_ids:
         background_tasks.add_task(_enqueue_enrichment, ingested_ids)
+        background_tasks.add_task(_enqueue_notifications, ingested_ids)
 
     log.info("alert.stored", event_count=len(ingested_ids))
 

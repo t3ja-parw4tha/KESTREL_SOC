@@ -6,6 +6,7 @@ import type { Alert } from '@/types/alert'
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '@/components/ui/Table'
 import { Spinner } from '@/components/ui/Spinner'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { cn } from '@/utils/cn'
 
 interface RecentAlertsProps {
   alerts: Alert[]
@@ -17,9 +18,16 @@ export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
 
   const riskClass = (riskScore: number | null | undefined) => {
     if (riskScore == null) return 'text-soc-muted'
-    if (riskScore >= 75) return 'text-red-400'
-    if (riskScore >= 50) return 'text-orange-400'
-    return 'text-blue-400'
+    if (riskScore >= 70) return 'text-red-400'
+    if (riskScore >= 40) return 'text-amber-400'
+    return 'text-emerald-400'
+  }
+
+  const riskDotClass = (riskScore: number | null | undefined) => {
+    if (riskScore == null) return 'bg-soc-muted'
+    if (riskScore >= 70) return 'bg-red-500'
+    if (riskScore >= 40) return 'bg-amber-500'
+    return 'bg-emerald-500'
   }
 
   const formatStatus = (status: Alert['status']) => {
@@ -28,7 +36,7 @@ export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
 
   return (
     <Card>
-      <CardHeader title="Recent alerts (last 10)" action={<a href="/alerts" className="text-sm text-blue-400 hover:underline">View all</a>} />
+      <CardHeader title="Recent alerts (last 10)" action={<a href="/app/alerts" className="text-sm text-blue-400 hover:underline">View all</a>} />
       {loading && (
         <div className="flex justify-center py-8">
           <Spinner size="lg" />
@@ -51,7 +59,7 @@ export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
             {alerts.slice(0, 10).map((alert) => (
               <TableRow
                 key={alert.id}
-                onClick={() => navigate(`/alerts/${alert.id}`)}
+                onClick={() => navigate(`/app/alerts/${alert.id}`)}
                 className="border-b border-soc-border hover:bg-soc-border/20 cursor-pointer transition-colors"
               >
                 <TableCell className="font-medium max-w-[260px] truncate" title={alert.title}>
@@ -63,7 +71,10 @@ export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
                 <TableCell className="text-soc-muted">{alert.source}</TableCell>
                 <TableCell className="text-soc-muted capitalize">{formatStatus(alert.status)}</TableCell>
                 <TableCell className={riskClass(alert.risk_score)}>
-                  {alert.risk_score == null ? '—' : alert.risk_score}
+                  <span className="inline-flex items-center gap-2">
+                    <span className={cn('w-2 h-2 rounded-full shrink-0', riskDotClass(alert.risk_score))} aria-hidden />
+                    {alert.risk_score == null ? '—' : alert.risk_score}
+                  </span>
                 </TableCell>
                 <TableCell className="text-soc-muted">{formatRelativeTime(alert.created_at)}</TableCell>
               </TableRow>

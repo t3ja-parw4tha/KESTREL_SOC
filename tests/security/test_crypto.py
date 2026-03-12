@@ -29,7 +29,7 @@ async def test_alert_ids_are_uuids_not_sequential():
     headers={"Authorization": f"Bearer {token}"},
   )
   try:
-    payload = {"source": "UnknownSource", "events": [{"severity": "Low", "title": "ID test"}]}
+    payload = {"source": "Sentinel", "events": [{"severity": "Low", "title": "ID test"}]}
     r = await client.post("/api/v1/ingest", json=payload)
     assert r.status_code == 200
     r2 = await client.get("/api/v1/alerts?limit=1")

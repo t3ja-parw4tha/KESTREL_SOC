@@ -1,12 +1,317 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 94%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 89%;
+    --input: 214 32% 89%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.75rem;
+
+    /* Severity tokens */
+    --severity-critical: 0 84% 60%;
+    --severity-critical-fg: 0 0% 100%;
+    --severity-high: 25 95% 53%;
+    --severity-high-fg: 0 0% 100%;
+    --severity-medium: 45 93% 47%;
+    --severity-medium-fg: 0 0% 10%;
+    --severity-low: 221 83% 53%;
+    --severity-low-fg: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-fg: 0 0% 100%;
+    --warning: 45 93% 47%;
+    --warning-fg: 0 0% 10%;
+
+    /* Chart */
+    --chart-1: 221 83% 53%;
+    --chart-2: 142 76% 36%;
+    --chart-3: 25 95% 53%;
+    --chart-4: 0 84% 60%;
+    --chart-5: 262 83% 58%;
+
+    /* Legacy soc- tokens (map to new system) */
+    --soc-bg: hsl(220, 20%, 97%);
+    --soc-surface: hsl(0, 0%, 100%);
+    --soc-border: hsl(214, 32%, 89%);
+    --soc-text: hsl(222, 47%, 11%);
+    --soc-muted: hsl(215, 16%, 47%);
+    --soc-accent: hsl(221, 83%, 53%);
+    --soc-low: hsl(221, 83%, 53%);
+
+    --soc-tooltip-bg: hsl(0, 0%, 100%);
+    --soc-tooltip-border: hsl(214, 32%, 89%);
+    --soc-tooltip-text: hsl(222, 47%, 11%);
+
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+    --shadow-card-hover: 0 4px 24px rgba(59,91,219,0.10), 0 1px 4px rgba(0,0,0,0.06);
+    --shadow-elevated: 0 8px 40px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+
+    --glow-critical: 0 0 24px rgba(239,68,68,0.20);
+    --glow-blue: 0 0 24px rgba(59,91,219,0.20);
+    --glow-emerald: 0 0 24px rgba(16,185,129,0.20);
+
+    --soc-chart-grid: rgba(0,0,0,0.05);
+    --soc-chart-line: hsl(221, 83%, 53%);
+    --soc-chart-fill-start: rgba(59,130,246,0.15);
+    --soc-chart-fill-end: rgba(59,130,246,0.01);
+  }
+
+  [data-theme="dark"], .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 96%;
+
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 96%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 60%;
+
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 96%;
+
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 20%;
+    --ring: 217 91% 60%;
+
+    --severity-critical: 0 84% 60%;
+    --severity-critical-fg: 0 0% 100%;
+    --severity-high: 25 95% 53%;
+    --severity-high-fg: 0 0% 100%;
+    --severity-medium: 45 93% 47%;
+    --severity-medium-fg: 0 0% 10%;
+    --severity-low: 217 91% 60%;
+    --severity-low-fg: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-fg: 0 0% 10%;
+    --warning: 45 93% 47%;
+    --warning-fg: 0 0% 10%;
+
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 25 95% 53%;
+    --chart-4: 0 84% 60%;
+    --chart-5: 262 83% 58%;
+
+    /* Legacy soc- tokens */
+    --soc-bg: hsl(222, 47%, 6%);
+    --soc-surface: hsl(222, 47%, 9%);
+    --soc-border: hsl(217, 33%, 17%);
+    --soc-text: hsl(210, 40%, 96%);
+    --soc-muted: hsl(215, 20%, 60%);
+    --soc-accent: hsl(217, 91%, 60%);
+    --soc-low: hsl(217, 91%, 60%);
+
+    --soc-tooltip-bg: hsl(222, 47%, 9%);
+    --soc-tooltip-border: hsl(217, 33%, 17%);
+    --soc-tooltip-text: hsl(210, 40%, 96%);
+
+    --shadow-card: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
+    --shadow-card-hover: 0 8px 32px rgba(59,130,246,0.15), 0 0 0 1px rgba(59,130,246,0.2);
+    --shadow-elevated: 0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+
+    --glow-critical: 0 0 32px rgba(239,68,68,0.30);
+    --glow-blue: 0 0 32px rgba(76,110,245,0.30);
+    --glow-emerald: 0 0 32px rgba(16,185,129,0.25);
+
+    --soc-chart-grid: rgba(255,255,255,0.04);
+    --soc-chart-line: hsl(217, 91%, 60%);
+    --soc-chart-fill-start: rgba(96,165,250,0.18);
+    --soc-chart-fill-end: rgba(96,165,250,0.0);
+  }
+
   html {
-    @apply antialiased;
+    font-feature-settings: "cv11", "ss01";
   }
+
   body {
-    @apply bg-soc-bg text-soc-text;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+
+  /* ── Premium Scrollbar ──────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+  /* ── Text Selection ─────────────────────────────────────────────────────── */
+  ::selection { background: hsl(var(--primary) / 0.2); color: inherit; }
+
+  /* ── Focus Ring ─────────────────────────────────────────────────────────── */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer utilities {
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* Glass card — Lovable style */
+  .glass-card {
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: blur(8px);
+    border: 1px solid hsl(var(--border) / 0.5);
+    box-shadow: var(--shadow-card);
+  }
+
+  .text-gradient-brand {
+    background: linear-gradient(135deg, #60a5fa 0%, #818cf8 50%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Button active scale */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg
+           bg-primary text-primary-foreground text-sm font-medium
+           hover:bg-primary/90 active:scale-[0.98]
+           transition-all duration-150
+           shadow-[0_1px_2px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)]
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* ── Print / PDF Report Styles ────────────────────────────────────────────── */
+@media print {
+  @page {
+    margin: 2cm 2.5cm;
+    size: A4 portrait;
+  }
+
+  /* Hide everything except the print report */
+  body > *:not(#kestrel-print-report) { display: none !important; }
+  #kestrel-print-report { display: block !important; }
+
+  .kestrel-report {
+    font-family: 'Segoe UI', 'Inter', Arial, sans-serif;
+    font-size: 10pt;
+    color: #0f172a;
+    line-height: 1.55;
+    background: white;
+  }
+
+  .kestrel-report h2 {
+    font-size: 11pt;
+    font-weight: 700;
+    color: #1e3a5f;
+    margin: 16pt 0 6pt;
+    padding-bottom: 3pt;
+    border-bottom: 1.5pt solid #1e3a5f;
+    letter-spacing: -0.2pt;
+  }
+
+  .kestrel-report p { margin: 0 0 6pt; }
+
+  .kestrel-report table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12pt;
+    font-size: 9pt;
+  }
+
+  .kestrel-report th {
+    background: #f1f5f9;
+    color: #334155;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 7.5pt;
+    letter-spacing: 0.5pt;
+    padding: 4pt 8pt;
+    border-top: 1pt solid #cbd5e1;
+    border-bottom: 1.5pt solid #94a3b8;
+    text-align: left;
+  }
+
+  .kestrel-report th.right,
+  .kestrel-report td.right { text-align: right; }
+
+  .kestrel-report td {
+    padding: 4pt 8pt;
+    border-bottom: 0.5pt solid #e2e8f0;
+    vertical-align: middle;
+  }
+
+  .kestrel-report tr:nth-child(even) td { background: #f8fafc; }
+
+  /* Severity badges */
+  .rpt-badge {
+    display: inline-block;
+    padding: 1pt 5pt;
+    border-radius: 2pt;
+    font-size: 8pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3pt;
+  }
+  .rpt-badge-critical { background: #fef2f2; color: #991b1b; }
+  .rpt-badge-high     { background: #fff7ed; color: #9a3412; }
+  .rpt-badge-medium   { background: #fefce8; color: #854d0e; }
+  .rpt-badge-low      { background: #eff6ff; color: #1e40af; }
+
+  /* Progress bars */
+  .rpt-bar-container { display: flex; align-items: center; }
+  .rpt-bar-track {
+    height: 5pt;
+    background: #e2e8f0;
+    border-radius: 3pt;
+    overflow: hidden;
+    width: 100%;
+    max-width: 90pt;
+  }
+  .rpt-bar-fill         { height: 100%; background: #3b82f6; border-radius: 3pt; }
+  .rpt-bar-fill.red     { background: #ef4444; }
+  .rpt-bar-fill.amber   { background: #f59e0b; }
+  .rpt-bar-fill.green   { background: #22c55e; }
+
+  /* Page break controls */
+  .rpt-page-break   { page-break-before: always; break-before: page; }
+  .rpt-avoid-break  { page-break-inside: avoid; break-inside: avoid; }
 }

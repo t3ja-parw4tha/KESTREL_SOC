@@ -1,5 +1,5 @@
 import { useDashboardStats } from '@/hooks/useDashboard'
-import { StatsRow } from '@/components/dashboard/StatsRow'
+import { StatsRow, type StatItem } from '@/components/dashboard/StatsRow'
 import { SeverityChart } from '@/components/dashboard/SeverityChart'
 import { VolumeChart } from '@/components/dashboard/VolumeChart'
 import { RecentAlerts } from '@/components/dashboard/RecentAlerts'
@@ -22,12 +22,18 @@ export function Dashboard() {
 
   if (isLoading && !stats) return <SpinnerOverlay />
 
-  const statItems = [
-    { label: 'Total Alerts', value: stats?.total_alerts ?? 0, icon: <AlertTriangle className="w-5 h-5 text-blue-400" />, variant: 'blue' as const },
-    { label: 'Critical Open', value: stats?.open_critical ?? 0, icon: <AlertTriangle className="w-5 h-5 text-red-400" />, variant: 'critical' as const, pulse: (stats?.open_critical ?? 0) > 0 },
-    { label: 'High Open', value: stats?.open_high ?? 0, icon: <AlertTriangle className="w-5 h-5 text-orange-400" />, variant: 'high' as const },
-    { label: 'Active Incidents', value: stats?.incidents_count ?? 0, icon: <Flame className="w-5 h-5 text-orange-400" />, variant: 'high' as const },
-    { label: 'MITRE Coverage %', value: `${stats?.coverage_pct ?? 0}%`, icon: <Shield className="w-5 h-5 text-emerald-400" />, variant: 'green' as const },
+  const openCritical = stats?.open_critical ?? 0
+  const openHigh = stats?.open_high ?? 0
+  const coveragePct = stats?.coverage_pct ?? 0
+  const techniquesDetected = stats?.techniques_detected ?? 0
+  const totalTechniques = stats?.total_techniques ?? 58
+
+  const statItems: StatItem[] = [
+    { label: 'Total Alerts', value: stats?.total_alerts ?? 0, icon: <AlertTriangle className="w-5 h-5 text-blue-500 dark:text-blue-400" />, variant: 'blue', cardTint: 'neutral' },
+    { label: 'Critical Open', value: openCritical, icon: <AlertTriangle className="w-5 h-5 text-red-500 dark:text-red-400" />, variant: 'critical', cardTint: 'danger', pulse: openCritical > 0 },
+    { label: 'High Open', value: openHigh, icon: <AlertTriangle className="w-5 h-5 text-orange-500 dark:text-orange-400" />, variant: 'high', cardTint: 'warning' },
+    { label: 'Active Incidents', value: stats?.incidents_count ?? 0, icon: <Flame className="w-5 h-5 text-orange-500 dark:text-orange-400" />, variant: 'high', cardTint: stats?.incidents_count ? 'warning' : 'neutral' },
+    { label: 'MITRE Coverage %', value: `${coveragePct}%`, icon: <Shield className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />, variant: coveragePct >= 20 ? 'green' : 'critical', cardTint: coveragePct < 20 ? 'danger' : 'neutral', subtitle: `${techniquesDetected} of ${totalTechniques} techniques detected` },
   ]
 
   const severityData = stats?.alerts_by_severity

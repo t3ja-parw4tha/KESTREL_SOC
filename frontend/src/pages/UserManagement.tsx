@@ -26,7 +26,9 @@ export function UserManagement() {
 
   const authHeader = useMemo(() => {
     const token = sessionStorage.getItem('kestrel_token')
-    return token ? { Authorization: `Bearer ${token}` } : {}
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return headers
   }, [user?.id])
 
   useEffect(() => {

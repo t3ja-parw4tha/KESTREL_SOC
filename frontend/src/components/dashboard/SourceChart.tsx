@@ -21,12 +21,18 @@ export function SourceChart({ data }: SourceChartProps) {
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d3a" />
-            <XAxis type="number" stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} />
-            <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={11} tick={{ fill: '#64748b' }} width={70} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--soc-chart-grid)" />
+            <XAxis type="number" stroke="var(--soc-muted)" fontSize={11} tick={{ fill: 'var(--soc-muted)' }} />
+            <YAxis type="category" dataKey="name" stroke="var(--soc-muted)" fontSize={11} tick={{ fill: 'var(--soc-muted)' }} width={70} />
             <Tooltip
-              contentStyle={{ backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '8px' }}
-              labelStyle={{ color: '#e2e8f0' }}
+              contentStyle={{
+                backgroundColor: 'var(--soc-tooltip-bg)',
+                border: '1px solid var(--soc-tooltip-border)',
+                borderRadius: '8px',
+                color: 'var(--soc-tooltip-text)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              }}
+              labelStyle={{ color: 'var(--soc-tooltip-text)' }}
             />
             <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} />
           </BarChart>

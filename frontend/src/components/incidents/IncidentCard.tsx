@@ -15,7 +15,7 @@ export function IncidentCard({ incident }: IncidentCardProps) {
   return (
     <Card
       className="cursor-pointer hover:border-soc-border transition-colors"
-      onClick={() => navigate(`/incidents/${incident.incident_id}`)}
+      onClick={() => navigate(`/app/incidents/${incident.incident_id}`)}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
@@ -42,7 +42,7 @@ export function IncidentCard({ incident }: IncidentCardProps) {
       </div>
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); navigate(`/incidents/${incident.incident_id}`) }}
+        onClick={(e) => { e.stopPropagation(); navigate(`/app/incidents/${incident.incident_id}`) }}
         className="mt-3 w-full py-1.5 rounded border border-soc-border text-soc-text hover:bg-soc-border/30 text-sm"
       >
         Investigate

@@ -1,5 +1,4 @@
 import { get } from './client'
-import { getAlerts } from './alerts'
 import type { Alert } from '@/types/alert'
 import type { Incident } from '@/types/incident'
 
@@ -9,100 +8,14 @@ export interface DashboardStats {
   open_high: number
   incidents_count: number
   coverage_pct: number
+  techniques_detected: number
+  total_techniques: number
   alerts_by_severity: Record<string, number>
   volume_timeline: Array<{ date: string; count: number }>
   recent_alerts: Alert[]
   incidents: Incident[]
 }
 
-interface IncidentsResponse {
-  items: unknown[]
-  total: number
-}
-
-interface MitreCoverageResponse {
-  summary?: { coverage_percentage?: number }
-  tactics?: unknown[]
-  techniques?: unknown[]
-}
-
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
-    try {
-      return await fn()
-    } catch {
-      return fallback
-    }
-  }
-
-  const emptyAlerts = { alerts: [], total: 0, page: 1, limit: 1 }
-
-  const [
-    allAlerts,
-    criticalOpen,
-    highOpen,
-    critTotal,
-    highTotal,
-    medTotal,
-    lowTotal,
-    incidentsRes,
-    mitreRes,
-    recentRes,
-  ] = await Promise.all([
-    safe(() => getAlerts({ limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'Critical', status: 'open', limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'High', status: 'open', limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'Critical', limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'High', limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'Medium', limit: 1 }), emptyAlerts),
-    safe(() => getAlerts({ severity: 'Low', limit: 1 }), emptyAlerts),
-    safe(() => get<IncidentsResponse>('/incidents'), { items: [], total: 0 }),
-    safe(() => get<{ summary?: { coverage_percentage?: number } }>('/mitre/coverage'), { summary: {} }),
-    safe(() => getAlerts({ page: 1, limit: 10 }), emptyAlerts),
-  ])
-
-  const bySeverity: Record<string, number> = {
-    Critical: critTotal.total,
-    High: highTotal.total,
-    Medium: medTotal.total,
-    Low: lowTotal.total,
-  }
-
-  // Build 7-day timeline from all alerts, not just recent 10
-  // Generate last 7 dates as keys
-  const last7: Record<string, number> = {}
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    last7[d.toISOString().slice(0, 10)] = 0
-  }
-
-  // Count from recentRes (limit 10 is not enough for 7 days)
-  // Instead fetch more for timeline purposes
-  const timelineRes = await safe(
-    () => getAlerts({ page: 1, limit: 100 }),
-    emptyAlerts
-  )
-  timelineRes.alerts.forEach((a) => {
-    const d = a.created_at?.slice(0, 10) || ''
-    if (d && d in last7) last7[d] = (last7[d] || 0) + 1
-  })
-
-  const volume_timeline = Object.entries(last7)
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => a.date.localeCompare(b.date))
-
-  const incidents = Array.isArray(incidentsRes.items) ? (incidentsRes.items as Incident[]) : []
-
-  return {
-    total_alerts: allAlerts.total,
-    open_critical: criticalOpen.total,
-    open_high: highOpen.total,
-    incidents_count: incidentsRes.total,
-    coverage_pct: (mitreRes as { summary?: { coverage_percentage?: number } })?.summary?.coverage_percentage ?? 0,
-    alerts_by_severity: bySeverity,
-    volume_timeline,
-    recent_alerts: recentRes.alerts,
-    incidents,
-  }
+  return get<DashboardStats>('/dashboard/stats')
 }

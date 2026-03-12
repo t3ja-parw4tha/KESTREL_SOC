@@ -245,13 +245,19 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
 
         content_type = request.headers.get("Content-Type", "")
         if request.method in ("POST", "PATCH", "PUT"):
-            if not content_type or "application/json" not in content_type.split(";")[0].strip().lower():
+            content_length_raw = request.headers.get("Content-Length", "0")
+            content_length = int(content_length_raw) if content_length_raw.isdigit() else 0
+            # Only enforce Content-Type when the request actually carries a body.
+            # Bodyless POSTs (e.g. /settings/test/{source}, /auth/logout) must not be blocked.
+            if content_length > 0 and (
+                not content_type
+                or "application/json" not in content_type.split(";")[0].strip().lower()
+            ):
                 return Response(
                     status_code=415,
                     content=json.dumps({"detail": "Content-Type must be application/json"}),
                 )
-            content_length = request.headers.get("Content-Length")
-            if content_length and int(content_length) > max_body:
+            if content_length > max_body:
                 return Response(status_code=413, content=json.dumps({"detail": "Request body too large"}))
 
         response = await call_next(request)

@@ -1,9 +1,10 @@
 """Authentication and session API routes."""
 
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -40,6 +41,7 @@ from app.security.auth import (
 )
 from app.security.rbac import get_current_user, require_permission, get_role_permissions
 from app.security.exceptions import SecurityError
+from app.security.csrf import get_csrf_token, verify_csrf
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -53,7 +55,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         max_age=REFRESH_COOKIE_MAX_AGE,
         httponly=True,
         secure=not get_settings().debug,
-        samesite="lax",
+        samesite="strict",
         path="/",
     )
 
@@ -141,10 +143,18 @@ async def setup_status(db: AsyncSession = Depends(get_db)):
     count = count_r.scalar() or 0
     return {"setup_complete": count > 0}
 
+
+@router.get("/csrf-token")
+async def csrf_token(data: dict = Depends(get_csrf_token)):
+    """Return a CSRF token bound to the current server session."""
+    return data
+
+
 @router.post("/users", status_code=201)
 async def create_user(
     body: CreateUserRequest,
     _admin: dict = Depends(require_permission("admin:write")),
+    _csrf: None = Depends(verify_csrf),
     db: AsyncSession = Depends(get_db),
 ):
     """Admin only: create a new user with a specific role."""
@@ -165,6 +175,34 @@ async def create_user(
     db.add(user)
     await db.commit()
     return {"username": user.username, "role": user.role, "created": True}
+
+
+@router.get("/users/analysts")
+async def list_analysts(
+    _user: Annotated[dict, Depends(require_permission("alerts:assign"))],
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return active users who can be assigned alerts (analyst, senior_analyst, admin).
+    Viewers are excluded — they cannot work alerts.
+    Accessible by senior_analyst and admin (requires alerts:assign).
+    Returns minimal fields: id, username, role.
+    """
+    r = await db.execute(
+        select(User)
+        .where(
+            User.is_active.is_(True),
+            User.role.in_(["analyst", "senior_analyst", "admin"]),
+        )
+        .order_by(User.username.asc())
+    )
+    analysts = r.scalars().all()
+    return {
+        "analysts": [
+            {"id": u.id, "username": u.username, "role": u.role}
+            for u in analysts
+        ]
+    }
 
 
 @router.get("/users")
@@ -194,6 +232,7 @@ async def update_user(
     user_id: int,
     body: UpdateUserRequest,
     _admin: dict = Depends(require_permission("admin:write")),
+    _csrf: None = Depends(verify_csrf),
     db: AsyncSession = Depends(get_db),
 ):
     r = await db.execute(select(User).where(User.id == user_id))
@@ -231,8 +270,9 @@ async def refresh(
         raise HTTPException(status_code=401, detail="Token revoked")
     user_id = int(payload["sub"])
     role = payload.get("role", "analyst")
-    # Revoke old refresh (rotation)
+    # Revoke old refresh (rotation) and delete its session row
     await blocklist_add(db, jti, datetime.fromtimestamp(payload["exp"], tz=timezone.utc))
+    await db.execute(delete(Session).where(Session.refresh_jti == jti))
     # New tokens
     access_token, _ = create_access_token(user_id, role)
     refresh_token, refresh_jti = create_refresh_token(user_id, role)
@@ -256,6 +296,7 @@ async def logout(
     response: Response,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     """Blocklist access jti and refresh jti; clear cookie."""
     auth = request.headers.get("Authorization")
@@ -286,6 +327,7 @@ async def change_password(
     body: ChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     """Validate old password; enforce new password policy; update hash."""
     user_id = int(user["sub"])
@@ -324,6 +366,7 @@ async def revoke_session(
     session_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
+    _csrf: None = Depends(verify_csrf),
 ):
     """Revoke a specific session (blocklist its refresh token)."""
     user_id = int(user["sub"])
@@ -345,6 +388,7 @@ async def create_api_key(
     body: ApiKeyCreateRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_permission("users:manage")),
+    _csrf: None = Depends(verify_csrf),
 ):
     """Generate new API key (admin only). Key returned once."""
     import json

@@ -14,10 +14,22 @@ export function Card({ children, className, onClick }: CardProps) {
       onClick={onClick}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
       className={cn(
-        'rounded-xl border border-soc-border bg-soc-surface p-4',
-        onClick && 'cursor-pointer hover:border-soc-border transition-colors',
+        'rounded-2xl border border-soc-border bg-soc-surface p-5 backdrop-blur-xl',
+        'transition-all duration-200',
+        onClick
+          ? 'cursor-pointer hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.995]'
+          : '',
         className
       )}
+      style={
+        onClick
+          ? undefined
+          : { boxShadow: 'var(--shadow-card)' }
+      }
+      {...(onClick ? {
+        onMouseEnter: (e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-card-hover)' },
+        onMouseLeave: (e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-card)' },
+      } : {})}
     >
       {children}
     </div>

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.security.rbac import require_permission
+from app.security.csrf import verify_csrf
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -18,6 +19,7 @@ ALLOWED_KEYS = {
     "ANTHROPIC_API_KEY",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_DEPLOYMENT",
     # Sentinel
     "AZURE_TENANT_ID",
     "AZURE_CLIENT_ID",
@@ -64,6 +66,27 @@ def read_env() -> dict[str, str]:
     return result
 
 
+import logging
+import os
+import re
+import stat
+
+_settings_logger = logging.getLogger("app.security.settings_audit")
+
+# Shell metacharacters and newlines that must not appear in setting values
+_UNSAFE_VALUE_PATTERN = re.compile(r"[\n\r\x00`$;|&]")
+
+
+def _sanitize_setting_value(value: str) -> str:
+    """Reject setting values containing shell metacharacters or newlines."""
+    if _UNSAFE_VALUE_PATTERN.search(value):
+        raise HTTPException(
+            status_code=400,
+            detail="Setting value contains unsafe characters",
+        )
+    return value.strip()
+
+
 def write_env(data: dict[str, str]) -> None:
     """Write dict back to .env file safely."""
     lines: list[str] = []
@@ -79,6 +102,11 @@ def write_env(data: dict[str, str]) -> None:
     for key, value in data.items():
         lines.append(f'{key}="{value}"')
     ENV_PATH.write_text("\n".join(lines) + "\n")
+    # Restrict .env file permissions (owner read/write only on POSIX)
+    try:
+        os.chmod(ENV_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+    except OSError:
+        pass  # Non-POSIX OS (Windows)
 
 
 def redact(data: dict[str, str]) -> dict[str, str]:
@@ -122,6 +150,7 @@ async def get_settings_view(
 async def update_settings(
     body: SettingsBulkUpdate,
     _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+    _csrf: None = Depends(verify_csrf),
 ):
     """Update multiple settings. Writes to local .env file."""
     bad_keys = set(body.settings.keys()) - ALLOWED_KEYS
@@ -131,18 +160,35 @@ async def update_settings(
             detail=f"Unknown settings keys: {bad_keys}",
         )
     skip = {k for k, v in body.settings.items() if v == REDACTED}
-    to_write = {k: v for k, v in body.settings.items() if k not in skip and v.strip()}
+    to_write = {}
+    for k, v in body.settings.items():
+        if k in skip or not v.strip():
+            continue
+        to_write[k] = _sanitize_setting_value(v)
     current = read_env()
     current.update(to_write)
     write_env(current)
     get_settings.cache_clear()
-    return {"updated": list(to_write.keys()), "skipped": list(skip)}
+    # Audit: log which keys were changed and by whom.
+    # Sensitive key names are not logged — only the count of sensitive changes.
+    admin_id = _admin.get("sub", "unknown")
+    changed_keys = list(to_write.keys())
+    safe_keys = [k for k in changed_keys if k not in SENSITIVE]
+    redacted_count = len([k for k in changed_keys if k in SENSITIVE])
+    _settings_logger.warning(
+        "Settings updated by user=%s safe_keys=%s sensitive_changed=%d",
+        admin_id,
+        safe_keys,
+        redacted_count,
+    )
+    return {"updated": changed_keys, "skipped": list(skip)}
 
 
 @router.delete("/{key}")
 async def delete_setting(
     key: str,
     _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+    _csrf: None = Depends(verify_csrf),
 ):
     """Remove a setting from .env."""
     if key not in ALLOWED_KEYS:
@@ -151,6 +197,9 @@ async def delete_setting(
     current.pop(key, None)
     write_env(current)
     get_settings.cache_clear()
+    admin_id = _admin.get("sub", "unknown")
+    logged_key = "[REDACTED_SENSITIVE_KEY]" if key in SENSITIVE else key
+    _settings_logger.warning("Setting deleted by user=%s key=%s", admin_id, logged_key)
     return {"deleted": key}
 
 
@@ -158,6 +207,7 @@ async def delete_setting(
 async def test_connection(
     source: str,
     _admin: Annotated[dict, Depends(require_permission("admin:write"))],
+    _csrf: None = Depends(verify_csrf),
 ):
     """Test a specific source connection."""
     current = read_env()

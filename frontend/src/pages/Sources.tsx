@@ -1,7 +1,31 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/api/client'
 import { SpinnerOverlay } from '@/components/ui/Spinner'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { SetupGuideModal } from '@/components/sources/SetupGuideModal'
+
+const TEST_PASSED_KEY = 'kestrel_source_tested_'
+const SOURCES_REQUIRING_TEST = ['sentinel', 'guardduty', 'virustotal', 'abuseipdb']
+
+function getTestPassed(sourceId: string): boolean {
+  try {
+    return localStorage.getItem(TEST_PASSED_KEY + sourceId) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Only show Connected when credentials exist AND Test Connection has passed (same as Settings). */
+function displayStatus(
+  apiStatus: 'connected' | 'not_configured' | 'push_ready',
+  sourceId: string
+): 'connected' | 'not_configured' | 'push_ready' {
+  if (apiStatus !== 'connected' || !SOURCES_REQUIRING_TEST.includes(sourceId)) {
+    return apiStatus
+  }
+  return getTestPassed(sourceId) ? 'connected' : 'not_configured'
+}
 
 interface Source {
   id: string
@@ -46,6 +70,7 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 export function Sources() {
+  const [setupGuideSourceId, setSetupGuideSourceId] = useState<string | null>(null)
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['sources'],
     queryFn: () => get<{ items: Source[]; configured_count: number }>('/sources'),
@@ -54,8 +79,9 @@ export function Sources() {
   if (isError) return <ErrorState title="Failed to load sources" onRetry={() => refetch()} />
   if (isLoading) return <SpinnerOverlay />
 
-  const items = data?.items ?? []
-  const configured = data?.configured_count ?? 0
+  const rawItems = data?.items ?? []
+  const items = rawItems.map((s) => ({ ...s, status: displayStatus(s.status, s.id) }))
+  const configured = items.filter((s) => s.status === 'connected').length
 
   return (
     <div className="space-y-6">
@@ -64,7 +90,7 @@ export function Sources() {
           Connected Sources
         </h1>
         <a
-          href="/settings"
+          href="/app/settings"
           className="text-sm text-blue-400 hover:underline"
         >
           Configure in Settings →
@@ -73,13 +99,17 @@ export function Sources() {
 
       <div className="p-4 rounded-lg border border-soc-border bg-soc-surface">
         <p className="text-sm text-soc-muted">
-          <span className="text-soc-text font-semibold">{configured}</span>
+          <span className={configured === 0 ? 'text-amber-400 font-semibold' : 'text-soc-text font-semibold'}>
+            {configured}
+          </span>
           {' '}of{' '}
-          <span className="text-soc-text font-semibold">4</span>
-          {' '}pull sources configured
+          <span className={configured === 0 ? 'text-amber-400 font-semibold' : 'text-soc-text font-semibold'}>
+            4
+          </span>
+          {' '}sources connected
           {' · '}
           <span className="text-blue-400">
-            {items.filter((s) => s.push).length} push sources ready
+            {items.filter((s) => s.push).length} push sources ready to receive
           </span>
         </p>
       </div>
@@ -112,18 +142,34 @@ export function Sources() {
                 </div>
               </div>
               <p className="text-xs text-soc-muted">{source.description}</p>
-              {source.status === 'not_configured' && (
+              {source.status === 'not_configured' && !source.push && (
                 <a
-                  href="/settings#sources"
+                  href="/app/settings#sources"
                   className="text-xs text-blue-400 hover:underline mt-2 inline-block"
                 >
                   Configure →
                 </a>
               )}
+              {source.push && (
+                <button
+                  type="button"
+                  onClick={() => setSetupGuideSourceId(source.id)}
+                  className="text-xs text-blue-400 hover:underline mt-2 inline-block"
+                >
+                  View Setup Guide →
+                </button>
+              )}
             </div>
           )
         })}
       </div>
+
+      {setupGuideSourceId && (
+        <SetupGuideModal
+          sourceId={setupGuideSourceId}
+          onClose={() => setSetupGuideSourceId(null)}
+        />
+      )}
     </div>
   )
 }

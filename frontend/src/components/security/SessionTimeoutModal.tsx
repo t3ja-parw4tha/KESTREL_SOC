@@ -1,6 +1,6 @@
 /**
- * Session timeout warning: shown 2 minutes before JWT expiry.
- * Auto-logout on expiry; clear all in-memory tokens on logout.
+ * Session timeout warning: shown after 5 minutes of inactivity.
+ * Auto-logout on JWT expiry; clear all in-memory tokens on logout.
  */
 
 import { useAuth } from '@/security/AuthContext'
@@ -12,29 +12,30 @@ export function SessionTimeoutModal() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       role="dialog"
       aria-labelledby="session-timeout-title"
+      aria-modal="true"
     >
-      <div className="bg-soc-card border border-soc-border rounded-lg shadow-lg p-6 max-w-sm mx-4">
+      <div className="bg-soc-surface border-2 border-soc-border rounded-xl shadow-2xl p-6 max-w-sm mx-4 w-full opacity-100">
         <h2 id="session-timeout-title" className="text-lg font-semibold text-soc-text mb-2">
           Session expiring
         </h2>
         <p className="text-sm text-soc-muted mb-4">
-          Your session will expire in about 2 minutes. Sign in again to continue.
+          You’ve been inactive for 5 minutes. Stay signed in or sign out.
         </p>
         <div className="flex gap-2 justify-end">
           <button
             type="button"
             onClick={dismissSessionWarning}
-            className="px-3 py-1.5 text-sm rounded border border-soc-border text-soc-muted hover:bg-soc-border/50"
+            className="px-3 py-1.5 text-sm rounded-lg border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50 font-medium"
           >
             Dismiss
           </button>
           <button
             type="button"
             onClick={logout}
-            className="px-3 py-1.5 text-sm rounded bg-soc-primary text-white hover:opacity-90"
+            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
           >
             Sign out
           </button>

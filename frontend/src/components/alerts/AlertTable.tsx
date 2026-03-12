@@ -30,6 +30,11 @@ interface AlertTableProps {
   sortKey?: SortKey
   sortDir?: SortDir
   onSort?: (key: SortKey) => void
+  /** Bulk selection and actions */
+  selectedIds?: Set<string>
+  onSelectionChange?: (ids: Set<string>) => void
+  onBulkAction?: (action: 'status' | 'assign_me' | 'false_positive', payload: { alert_ids: string[]; status?: string; assigned_to?: string | null; assign_comment?: string }) => void
+  currentUsername?: string | null
 }
 
 const SEVERITY_ORDER: Record<string, number> = { Critical: 4, High: 3, Medium: 2, Low: 1 }
@@ -70,10 +75,49 @@ export function AlertTable({
   sortKey = 'created_at',
   sortDir = 'desc',
   onSort,
+  selectedIds = new Set(),
+  onSelectionChange,
+  onBulkAction,
+  currentUsername,
 }: AlertTableProps) {
   const navigate = useNavigate()
   const sorted = sortAlerts(alerts, sortKey, sortDir)
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const hasSelection = selectedIds.size > 0
+  const pageIds = sorted.map((a) => a.id)
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id))
+
+  const toggleSelect = (id: string) => {
+    if (!onSelectionChange) return
+    const next = new Set(selectedIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onSelectionChange(next)
+  }
+  const toggleSelectAllOnPage = () => {
+    if (!onSelectionChange) return
+    if (allOnPageSelected) {
+      const next = new Set(selectedIds)
+      pageIds.forEach((id) => next.delete(id))
+      onSelectionChange(next)
+    } else {
+      const next = new Set(selectedIds)
+      pageIds.forEach((id) => next.add(id))
+      onSelectionChange(next)
+    }
+  }
+  const handleBulkStatus = (status: string) => {
+    if (!onBulkAction || !hasSelection) return
+    onBulkAction('status', { alert_ids: Array.from(selectedIds), status })
+  }
+  const handleBulkAssignMe = () => {
+    if (!onBulkAction || !hasSelection || !currentUsername) return
+    onBulkAction('assign_me', { alert_ids: Array.from(selectedIds), assigned_to: currentUsername })
+  }
+  const handleBulkFalsePositive = () => {
+    if (!onBulkAction || !hasSelection) return
+    onBulkAction('false_positive', { alert_ids: Array.from(selectedIds), status: 'false_positive' })
+  }
 
   const SortIcon = ({ column }: { column: SortKey }) => {
     if (sortKey !== column) return null
@@ -92,9 +136,63 @@ export function AlertTable({
 
   return (
     <div className="space-y-4">
+      {hasSelection && onBulkAction && (
+        <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-soc-border bg-soc-surface">
+          <span className="text-sm text-soc-muted">{selectedIds.size} selected</span>
+          <button
+            type="button"
+            onClick={() => handleBulkStatus('in_progress')}
+            className="px-3 py-1.5 text-sm rounded border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50"
+          >
+            Set In Progress
+          </button>
+          <button
+            type="button"
+            onClick={() => handleBulkStatus('resolved')}
+            className="px-3 py-1.5 text-sm rounded border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50"
+          >
+            Resolve
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkFalsePositive}
+            className="px-3 py-1.5 text-sm rounded border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50"
+          >
+            Mark False Positive
+          </button>
+          {currentUsername && (
+            <button
+              type="button"
+              onClick={handleBulkAssignMe}
+              className="px-3 py-1.5 text-sm rounded border border-blue-500/50 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+            >
+              Assign to me
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onSelectionChange?.(new Set())}
+            className="px-3 py-1.5 text-sm rounded border border-soc-border text-soc-muted hover:text-soc-text"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
       <Table>
         <TableHead>
           <TableRow>
+            {onSelectionChange && (
+              <TableHeader className="w-10">
+                <input
+                  type="checkbox"
+                  checked={allOnPageSelected}
+                  onChange={toggleSelectAllOnPage}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="Select all on page"
+                  className="rounded border-soc-border"
+                />
+              </TableHeader>
+            )}
             <TableHeader>
               <button type="button" onClick={() => onSort?.('severity')} className="flex items-center gap-1 hover:text-soc-text">
                 Severity <SortIcon column="severity" />
@@ -122,9 +220,20 @@ export function AlertTable({
           {sorted.map((alert) => (
             <TableRow
               key={alert.id}
-              onClick={() => navigate(`/alerts/${alert.id}`)}
+              onClick={() => navigate(`/app/alerts/${alert.id}`)}
               className="cursor-pointer hover:bg-soc-border/30"
             >
+              {onSelectionChange && (
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(alert.id)}
+                    onChange={() => toggleSelect(alert.id)}
+                    aria-label={`Select ${alert.id}`}
+                    className="rounded border-soc-border"
+                  />
+                </TableCell>
+              )}
               <TableCell>
                 <AlertBadge severity={alert.severity} />
               </TableCell>

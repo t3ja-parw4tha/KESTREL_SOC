@@ -66,6 +66,7 @@ export function secondsUntilExpiry(token: string): number | null {
 }
 
 /**
- * Default warning threshold: show session warning 2 minutes before expiry.
+ * Inactivity threshold: show session warning after this many milliseconds with no user activity.
+ * 5 minutes.
  */
-export const SESSION_WARNING_SECONDS = 120
+export const SESSION_INACTIVITY_MS = 5 * 60 * 1000

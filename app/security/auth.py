@@ -7,14 +7,16 @@ session limits, refresh rotation.
 
 import hashlib
 import logging
+import os
 import re
 import secrets
+import stat
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+import jwt as pyjwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from argon2 import PasswordHasher
@@ -37,8 +39,6 @@ PROGRESSIVE_DELAYS = (1, 2, 4, 8, 16)  # seconds between attempts
 ALERT_FAILURE_THRESHOLD = 3
 MAX_SESSIONS_PER_USER = 3
 ABSOLUTE_SESSION_TIMEOUT_HOURS = 8
-
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 
 _ph = PasswordHasher()
 
@@ -71,6 +71,12 @@ def ensure_jwt_keys() -> None:
                 serialization.PublicFormat.SubjectPublicKeyInfo,
             )
         )
+        # H3: Restrict private key file permissions (owner read/write only)
+        try:
+            os.chmod(PRIVATE_KEY_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+            os.chmod(PUBLIC_KEY_PATH, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)  # 0o644
+        except OSError:
+            logger.warning("Could not set JWT key file permissions (non-POSIX OS)")
 
 
 def get_or_create_rsa_keys() -> tuple[str, str]:
@@ -99,7 +105,7 @@ def create_access_token(user_id: int, role: str) -> tuple[str, str]:
         "exp": int(exp.timestamp()),
         "type": "access",
     }
-    token = jwt.encode(payload, private_pem, algorithm=ALGORITHM)
+    token = pyjwt.encode(payload, private_pem, algorithm=ALGORITHM)
     return token, jti
 
 
@@ -119,7 +125,7 @@ def create_refresh_token(user_id: int, role: str) -> tuple[str, str]:
         "exp": int(exp.timestamp()),
         "type": "refresh",
     }
-    token = jwt.encode(payload, private_pem, algorithm=ALGORITHM)
+    token = pyjwt.encode(payload, private_pem, algorithm=ALGORITHM)
     return token, jti
 
 
@@ -127,8 +133,8 @@ def verify_token(token: str) -> dict:
     """Decode and validate JWT; raises SecurityError if invalid or blocklisted."""
     _, public_pem = _get_jwt_keys()
     try:
-        payload = jwt.decode(token, public_pem, algorithms=[ALGORITHM])
-    except JWTError as e:
+        payload = pyjwt.decode(token, public_pem, algorithms=[ALGORITHM])
+    except InvalidTokenError as e:
         raise SecurityError("Invalid or expired token") from e
     return payload
 
@@ -151,7 +157,9 @@ def hash_password(password: str) -> str:
     return _ph.hash(password)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
     try:
         return _ph.verify(hashed, plain)
     except (VerifyMismatchError, VerificationError, InvalidHashError):

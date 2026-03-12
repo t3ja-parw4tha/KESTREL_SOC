@@ -1,11 +1,19 @@
 import { cn } from '@/utils/cn'
 import type { MitreTechnique } from '@/types/mitre'
 
-const SEVERITY_CARD_CLASS: Record<string, string> = {
-  critical: 'border-critical/40 bg-critical/10',
-  high: 'border-high/40 bg-high/10',
-  medium: 'border-medium/40 bg-medium/10',
-  low: 'border-low/40 bg-low/10',
+/* ── Heat color scale based on alert count ─────────────────────────────── */
+function heatColor(count: number): string {
+  if (count === 0) return 'bg-soc-bg border-soc-border text-soc-muted'
+  if (count <= 3) return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+  if (count <= 10) return 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+  return 'bg-red-500/15 border-red-500/30 text-red-400'
+}
+
+function heatDot(count: number): string {
+  if (count === 0) return 'bg-soc-border'
+  if (count <= 3) return 'bg-emerald-400'
+  if (count <= 10) return 'bg-amber-400'
+  return 'bg-red-400'
 }
 
 interface TechniqueCardProps {
@@ -15,10 +23,8 @@ interface TechniqueCardProps {
 }
 
 export function TechniqueCard({ technique, className, onClick }: TechniqueCardProps) {
-  const hasAlerts = (technique.alert_count ?? 0) > 0
-  const severityClass = technique.severity
-    ? SEVERITY_CARD_CLASS[technique.severity] ?? 'border-soc-border bg-soc-surface'
-    : 'border-soc-border bg-soc-surface'
+  const count = technique.alert_count ?? 0
+  const hasAlerts = count > 0
 
   return (
     <div
@@ -27,22 +33,26 @@ export function TechniqueCard({ technique, className, onClick }: TechniqueCardPr
       onClick={onClick}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
       className={cn(
-        'rounded-lg border p-2 text-xs transition-colors',
-        hasAlerts ? severityClass : 'border-soc-border bg-soc-bg text-soc-muted',
-        onClick && 'cursor-pointer hover:opacity-90',
+        'group relative rounded-lg border px-3 py-2 text-xs transition-all duration-200',
+        heatColor(count),
+        onClick && 'cursor-pointer hover:scale-[1.03] hover:shadow-lg hover:shadow-black/20',
         className
       )}
-      title={technique.name}
+      title={`${technique.id} — ${technique.name}${hasAlerts ? ` (${count} alert${count > 1 ? 's' : ''})` : ''}`}
     >
-      <div className="font-mono font-medium text-soc-text">{technique.id}</div>
-      {technique.name && (
-        <div className="mt-0.5 truncate text-soc-muted" title={technique.name}>
-          {technique.name}
-        </div>
-      )}
-      {hasAlerts && (
-        <div className="mt-1 text-soc-muted">{technique.alert_count} alert(s)</div>
-      )}
+      {/* Heat indicator dot */}
+      <div className="flex items-center gap-2">
+        <span className={cn('h-2 w-2 rounded-full shrink-0', heatDot(count))} />
+        <span className="font-mono font-semibold text-soc-text text-[11px]">{technique.id}</span>
+        {hasAlerts && (
+          <span className="ml-auto text-[10px] font-semibold tabular-nums opacity-80">
+            {count}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] leading-snug text-soc-muted truncate group-hover:text-soc-text transition-colors">
+        {technique.name}
+      </p>
     </div>
   )
 }
