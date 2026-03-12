@@ -1,12 +1,12 @@
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 
 const SEVERITY_COLORS: Record<string, string> = {
-  Critical: '#ef4444',
-  High: '#f97316',
-  Medium: '#eab308',
-  Low: '#3b82f6',
-  Info: '#6b7280',
+  Critical: 'hsl(0, 84%, 60%)',
+  High:     'hsl(25, 95%, 53%)',
+  Medium:   'hsl(45, 93%, 47%)',
+  Low:      'hsl(217, 91%, 60%)',
+  Info:     'hsl(215, 16%, 47%)',
 }
 
 interface SeverityChartProps {
@@ -19,69 +19,87 @@ export function SeverityChart({ data }: SeverityChartProps) {
   const total = filtered.reduce((s, d) => s + d.value, 0)
 
   return (
-    <div className="rounded-2xl border border-soc-border bg-soc-surface p-5 h-full" style={{ boxShadow: 'var(--shadow-card)' }}>
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-sm font-semibold text-soc-text">Alerts by Severity</h3>
-        <span className="text-xs text-soc-muted">Click to filter</span>
+    <div className="glass-card p-5 animate-fade-in" style={{ animationDelay: '100ms' }}>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="text-sm font-semibold">Alerts by Severity</h3>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Current distribution</p>
+        </div>
+        <span className="text-[10px] text-muted-foreground">Click to filter</span>
       </div>
+
       {filtered.length === 0 ? (
-        <div className="h-[280px] flex items-center justify-center text-soc-muted text-sm">
+        <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">
           No alert data yet
         </div>
       ) : (
-        <div className="relative" style={{ height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-              <Pie
-                data={filtered}
-                cx="50%"
-                cy="50%"
-                innerRadius={75}
-                outerRadius={110}
-                paddingAngle={3}
-                dataKey="value"
-                startAngle={90}
-                endAngle={-270}
-                style={{ cursor: 'pointer' }}
-                onClick={(entry) => navigate(`/app/alerts?severity=${encodeURIComponent(entry.name)}`)}
+        <div className="flex flex-col items-center">
+          <div className="relative w-[220px] h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={filtered}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={70}
+                  outerRadius={100}
+                  paddingAngle={4}
+                  dataKey="value"
+                  startAngle={90}
+                  endAngle={-270}
+                  style={{ cursor: 'pointer' }}
+                  animationBegin={200}
+                  animationDuration={800}
+                  onClick={(entry) =>
+                    navigate(`/app/alerts?severity=${encodeURIComponent(entry.name)}`)
+                  }
+                >
+                  {filtered.map((entry, i) => (
+                    <Cell
+                      key={`cell-${i}`}
+                      fill={SEVERITY_COLORS[entry.name] ?? 'hsl(215, 16%, 47%)'}
+                      stroke="none"
+                      style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.[0]) return null
+                    const d = payload[0].payload as { name: string; value: number }
+                    const color = SEVERITY_COLORS[d.name] ?? '#6b7280'
+                    return (
+                      <div className="glass-card-elevated px-3 py-2 text-xs font-medium">
+                        <span style={{ color }}>{d.name}</span>:{' '}
+                        {d.value} ({((d.value / total) * 100).toFixed(0)}%)
+                      </div>
+                    )
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-3xl font-bold tabular-nums">{total}</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Total</span>
+            </div>
+          </div>
+
+          <div className="flex gap-5 mt-4 flex-wrap justify-center">
+            {filtered.map((d) => (
+              <div
+                key={d.name}
+                className="flex items-center gap-1.5 text-[10px] group cursor-pointer"
+                onClick={() => navigate(`/app/alerts?severity=${encodeURIComponent(d.name)}`)}
               >
-                {filtered.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={SEVERITY_COLORS[entry.name] ?? '#6b7280'}
-                    stroke="transparent"
-                    style={{ cursor: 'pointer' }}
-                  />
-                ))}
-              </Pie>
-              <Tooltip
-              contentStyle={{
-                backgroundColor: 'var(--soc-tooltip-bg)',
-                border: '1px solid var(--soc-tooltip-border)',
-                borderRadius: '8px',
-                color: 'var(--soc-tooltip-text)',
-                fontSize: '12px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              }}
-              formatter={(value: number, name: string) => [value, name]}
-            />
-            <Legend
-              verticalAlign="bottom"
-              height={36}
-              formatter={(value) => (
-                <span style={{ color: 'var(--soc-text)', fontSize: '12px' }}>
-                  {value}
+                <div
+                  className="h-2.5 w-2.5 rounded-full transition-transform group-hover:scale-125"
+                  style={{ backgroundColor: SEVERITY_COLORS[d.name] ?? '#6b7280' }}
+                />
+                <span className="text-muted-foreground group-hover:text-foreground transition-colors">
+                  {d.name}
                 </span>
-              )}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
-            style={{ marginTop: -36 }}
-          >
-            <span className="text-2xl font-bold text-soc-text">{total}</span>
-            <span className="text-xs text-soc-muted">Total</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

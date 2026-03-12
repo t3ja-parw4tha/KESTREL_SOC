@@ -47,7 +47,7 @@ export default {
         },
         success: {
           DEFAULT: 'hsl(var(--success))',
-          foreground: 'hsl(var(--success-fg))',
+          foreground: 'hsl(var(--success-foreground))',
         },
         warning: {
           DEFAULT: 'hsl(var(--warning))',
@@ -62,6 +62,18 @@ export default {
           'medium-fg': 'hsl(var(--severity-medium-fg))',
           low: 'hsl(var(--severity-low))',
           'low-fg': 'hsl(var(--severity-low-fg))',
+          info: 'hsl(var(--severity-info))',
+        },
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar-background))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          primary: 'hsl(var(--sidebar-primary))',
+          'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
+          accent: 'hsl(var(--sidebar-accent))',
+          'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+          border: 'hsl(var(--sidebar-border))',
+          ring: 'hsl(var(--sidebar-ring))',
+          muted: 'hsl(var(--sidebar-muted))',
         },
         chart: {
           '1': 'hsl(var(--chart-1))',
@@ -102,20 +114,55 @@ export default {
         'glow-emerald': 'var(--glow-emerald)',
       },
       animation: {
-        'fade-in': 'fadeIn 0.2s ease-out',
+        'fade-in': 'fadeInUp 0.4s ease-out',
+        'fade-in-fast': 'fadeInUp 0.2s ease-out',
         'slide-up': 'slideUp 0.25s cubic-bezier(0.16,1,0.3,1)',
         'pulse-dot': 'pulseDot 2s ease-in-out infinite',
         'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
+        'glow-pulse': 'glowPulse 3s ease-in-out infinite',
+        'spin-slow': 'spin 20s linear infinite',
+        'shimmer': 'shimmer 3s linear infinite',
+        'scale-in': 'scaleIn 0.3s ease-out',
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
       },
       keyframes: {
-        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
-        slideUp: { '0%': { opacity: '0', transform: 'translateY(6px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
-        pulseDot: { '0%, 100%': { opacity: '1', transform: 'scale(1)' }, '50%': { opacity: '0.5', transform: 'scale(0.85)' } },
-        pulseGlow: { '0%, 100%': { opacity: '1' }, '50%': { opacity: '0.5' } },
-        'accordion-down': { from: { height: '0' }, to: { height: 'var(--radix-accordion-content-height)' } },
-        'accordion-up': { from: { height: 'var(--radix-accordion-content-height)' }, to: { height: '0' } },
+        fadeInUp: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideUp: {
+          '0%': { opacity: '0', transform: 'translateY(6px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        pulseDot: {
+          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+          '50%': { opacity: '0.5', transform: 'scale(0.85)' },
+        },
+        pulseGlow: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.5' },
+        },
+        glowPulse: {
+          '0%, 100%': { boxShadow: '0 0 20px 0 hsl(var(--primary) / 0.15)' },
+          '50%': { boxShadow: '0 0 40px 5px hsl(var(--primary) / 0.3)' },
+        },
+        scaleIn: {
+          from: { transform: 'scale(0.95)', opacity: '0' },
+          to: { transform: 'scale(1)', opacity: '1' },
+        },
+        shimmer: {
+          from: { backgroundPosition: '-200% 0' },
+          to: { backgroundPosition: '200% 0' },
+        },
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
+        },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
       },
       transitionTimingFunction: {
         spring: 'cubic-bezier(0.16, 1, 0.3, 1)',

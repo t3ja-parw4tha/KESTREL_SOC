@@ -43,7 +43,8 @@ export function TopBar({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none transition-colors group-focus-within:text-blue-400" />
           <input
             type="search"
-            placeholder="Search alerts... (/)"
+            data-search-input
+            placeholder='Search alerts, incidents, IOCs… ( / )'
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-muted/50 text-foreground text-sm placeholder:text-muted-foreground/60

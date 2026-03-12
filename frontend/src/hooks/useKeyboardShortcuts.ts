@@ -53,13 +53,13 @@ export function useKeyboardShortcuts(): void {
       // Focus search bar: / (when not in an input) or Ctrl+K anywhere
       if (e.key === '/' && !isTextTarget(e.target)) {
         e.preventDefault()
-        const input = document.querySelector<HTMLInputElement>('input[type="search"]')
+        const input = document.querySelector<HTMLInputElement>('[data-search-input], input[type="search"]')
         input?.focus()
         return
       }
       if (e.ctrlKey && e.key === 'k') {
         e.preventDefault()
-        const input = document.querySelector<HTMLInputElement>('input[type="search"]')
+        const input = document.querySelector<HTMLInputElement>('[data-search-input], input[type="search"]')
         input?.focus()
         return
       }

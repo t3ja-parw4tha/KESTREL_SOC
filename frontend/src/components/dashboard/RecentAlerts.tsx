@@ -1,11 +1,8 @@
 import { useNavigate } from 'react-router-dom'
-import { Card, CardHeader } from '@/components/ui/Card'
 import { AlertBadge } from '@/components/alerts/AlertBadge'
 import { formatRelativeTime } from '@/utils/time'
 import type { Alert } from '@/types/alert'
-import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '@/components/ui/Table'
-import { Spinner } from '@/components/ui/Spinner'
-import { EmptyState } from '@/components/ui/EmptyState'
+import { ArrowRight } from 'lucide-react'
 import { cn } from '@/utils/cn'
 
 interface RecentAlertsProps {
@@ -13,75 +10,113 @@ interface RecentAlertsProps {
   loading?: boolean
 }
 
+const statusColors: Record<string, string> = {
+  new:            'bg-primary/15 text-primary',
+  in_progress:    'bg-severity-medium/15 text-severity-medium',
+  resolved:       'bg-success/15 text-success',
+  closed:         'bg-muted text-muted-foreground',
+  false_positive: 'bg-muted text-muted-foreground',
+}
+
+function riskClass(score: number | null | undefined) {
+  if (score == null) return 'text-muted-foreground'
+  if (score >= 75) return 'severity-critical'
+  if (score >= 50) return 'severity-high'
+  return 'severity-medium'
+}
+
 export function RecentAlerts({ alerts, loading }: RecentAlertsProps) {
   const navigate = useNavigate()
 
-  const riskClass = (riskScore: number | null | undefined) => {
-    if (riskScore == null) return 'text-soc-muted'
-    if (riskScore >= 70) return 'text-red-400'
-    if (riskScore >= 40) return 'text-amber-400'
-    return 'text-emerald-400'
-  }
-
-  const riskDotClass = (riskScore: number | null | undefined) => {
-    if (riskScore == null) return 'bg-soc-muted'
-    if (riskScore >= 70) return 'bg-red-500'
-    if (riskScore >= 40) return 'bg-amber-500'
-    return 'bg-emerald-500'
-  }
-
-  const formatStatus = (status: Alert['status']) => {
-    return status.replace(/_/g, ' ')
-  }
-
   return (
-    <Card>
-      <CardHeader title="Recent alerts (last 10)" action={<a href="/app/alerts" className="text-sm text-blue-400 hover:underline">View all</a>} />
+    <div className="glass-card p-5 animate-fade-in" style={{ animationDelay: '200ms' }}>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold">Recent Alerts</h3>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Latest incoming security alerts</p>
+        </div>
+        <button
+          onClick={() => navigate('/app/alerts')}
+          className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 font-medium transition-colors"
+        >
+          View all <ArrowRight className="h-3 w-3" />
+        </button>
+      </div>
+
       {loading && (
-        <div className="flex justify-center py-8">
-          <Spinner size="lg" />
+        <div className="space-y-2">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-10 rounded-lg bg-muted/40 shimmer" />
+          ))}
         </div>
       )}
-      {!loading && !alerts?.length && <EmptyState title="No recent alerts" />}
-      {!loading && alerts?.length > 0 && (
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableHeader>Title</TableHeader>
-              <TableHeader>Severity</TableHeader>
-              <TableHeader>Source</TableHeader>
-              <TableHeader>Status</TableHeader>
-              <TableHeader>Risk Score</TableHeader>
-              <TableHeader>Time</TableHeader>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {alerts.slice(0, 10).map((alert) => (
-              <TableRow
-                key={alert.id}
-                onClick={() => navigate(`/app/alerts/${alert.id}`)}
-                className="border-b border-soc-border hover:bg-soc-border/20 cursor-pointer transition-colors"
-              >
-                <TableCell className="font-medium max-w-[260px] truncate" title={alert.title}>
-                  {alert.title}
-                </TableCell>
-                <TableCell>
-                  <AlertBadge severity={alert.severity} />
-                </TableCell>
-                <TableCell className="text-soc-muted">{alert.source}</TableCell>
-                <TableCell className="text-soc-muted capitalize">{formatStatus(alert.status)}</TableCell>
-                <TableCell className={riskClass(alert.risk_score)}>
-                  <span className="inline-flex items-center gap-2">
-                    <span className={cn('w-2 h-2 rounded-full shrink-0', riskDotClass(alert.risk_score))} aria-hidden />
-                    {alert.risk_score == null ? '—' : alert.risk_score}
-                  </span>
-                </TableCell>
-                <TableCell className="text-soc-muted">{formatRelativeTime(alert.created_at)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+
+      {!loading && !alerts?.length && (
+        <div className="py-10 text-center text-sm text-muted-foreground">
+          No recent alerts
+        </div>
       )}
-    </Card>
+
+      {!loading && alerts?.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border/30">
+                {['Alert', 'Severity', 'Status', 'Source', 'Risk', 'Time'].map((h, i) => (
+                  <th
+                    key={h}
+                    className={cn(
+                      'pb-2 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground px-2',
+                      i === 0 && 'pl-0',
+                      i === 5 && 'text-right'
+                    )}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {alerts.slice(0, 8).map((alert) => (
+                <tr
+                  key={alert.id}
+                  className="border-b border-border/20 cursor-pointer hover:bg-primary/5 transition-colors"
+                  onClick={() => navigate(`/app/alerts/${alert.id}`)}
+                >
+                  <td className="py-2.5 px-2 pl-0 font-medium max-w-[200px] truncate">
+                    {alert.title}
+                  </td>
+                  <td className="py-2.5 px-2">
+                    <AlertBadge severity={alert.severity} />
+                  </td>
+                  <td className="py-2.5 px-2">
+                    <span
+                      className={cn(
+                        'inline-flex px-1.5 py-0.5 rounded-md text-[9px] font-semibold capitalize',
+                        statusColors[alert.status] ?? 'bg-muted text-muted-foreground'
+                      )}
+                    >
+                      {alert.status.replace('_', ' ')}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-2 text-muted-foreground">{alert.source}</td>
+                  <td
+                    className={cn(
+                      'py-2.5 px-2 font-mono font-bold tabular-nums',
+                      riskClass(alert.risk_score)
+                    )}
+                  >
+                    {alert.risk_score ?? '—'}
+                  </td>
+                  <td className="py-2.5 px-2 text-right text-muted-foreground">
+                    {formatRelativeTime(alert.created_at)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }
