@@ -76,3 +76,11 @@ frontend/dist/
 
 # Repomix (generated)
 repomix-output.xml
+
+# Claude Code internal files
+.claude/
+
+# Temporary / local design reference files
+cursor_landing_page_design.md
+frontend_diff.txt
+premium-ui-redesign-main/
