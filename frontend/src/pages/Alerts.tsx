@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+﻿import { useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Inbox, AlertTriangle, Download } from 'lucide-react'
 import { useAlerts } from '@/hooks/useAlerts'
@@ -183,7 +183,7 @@ export function Alerts() {
           <button
             type="button"
             onClick={() => setPendingBulk(null)}
-            className="px-3 py-1.5 rounded border border-soc-border text-soc-muted text-sm hover:text-soc-text"
+            className="px-3 py-1.5 rounded border border-border text-muted-foreground text-sm hover:text-foreground"
           >
             Cancel
           </button>
@@ -191,7 +191,10 @@ export function Alerts() {
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h1 className="text-2xl font-semibold text-soc-text">Alerts</h1>
+        <div>
+          <h1 className="text-lg font-bold tracking-tight">Alerts</h1>
+          <p className="text-xs text-muted-foreground">Monitor and manage security alerts across all sources</p>
+        </div>
         <div className="flex items-center gap-2">
           {/* Export CSV */}
           {sortedAlerts.length > 0 && (
@@ -199,22 +202,22 @@ export function Alerts() {
               type="button"
               onClick={() => exportAlertsCSV(sortedAlerts)}
               title="Export current page as CSV"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-muted hover:text-soc-text text-sm transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">Export CSV</span>
             </button>
           )}
           {/* My Queue / All Alerts toggle */}
-          <div className="flex rounded-lg border border-soc-border overflow-hidden text-sm self-start sm:self-auto">
+          <div className="flex rounded-lg overflow-hidden text-sm self-start sm:self-auto border border-border">
           <button
             type="button"
             onClick={() => handleQueueSwitch('all')}
             className={cn(
-              'px-4 py-1.5 transition-colors',
+              'px-4 py-1.5 transition-colors text-xs font-medium',
               queueMode === 'all'
-                ? 'bg-blue-600 text-soc-bg dark:text-white'
-                : 'bg-soc-surface text-soc-muted hover:text-soc-text'
+                ? 'gradient-primary text-primary-foreground'
+                : 'bg-card text-muted-foreground hover:text-foreground'
             )}
           >
             All Alerts
@@ -223,16 +226,16 @@ export function Alerts() {
             type="button"
             onClick={() => handleQueueSwitch('mine')}
             className={cn(
-              'px-4 py-1.5 flex items-center gap-1.5 transition-colors',
+              'px-4 py-1.5 flex items-center gap-1.5 transition-colors text-xs font-medium',
               queueMode === 'mine'
-                ? 'bg-blue-600 text-soc-bg dark:text-white'
-                : 'bg-soc-surface text-soc-muted hover:text-soc-text'
+                ? 'gradient-primary text-primary-foreground'
+                : 'bg-card text-muted-foreground hover:text-foreground'
             )}
           >
             <Inbox className="w-3.5 h-3.5" />
             My Queue
             {queueMode === 'mine' && (data?.total ?? 0) > 0 && (
-              <span className="min-w-[18px] px-1 rounded-full text-xs font-medium bg-black/20 dark:bg-white/20 text-soc-bg dark:text-white">
+              <span className="min-w-[18px] px-1 rounded-full text-xs font-medium bg-black/20 text-white">
                 {(data?.total ?? 0) > 99 ? '99+' : data?.total}
               </span>
             )}
@@ -242,10 +245,10 @@ export function Alerts() {
       </div>
 
       {queueMode === 'mine' && data?.total === 0 && !isLoading && (
-        <div className="rounded-lg border border-soc-border bg-soc-surface p-6 text-center">
-          <Inbox className="w-8 h-8 text-soc-muted mx-auto mb-2" />
-          <p className="text-soc-text font-medium">Your queue is empty</p>
-          <p className="text-sm text-soc-muted mt-1">
+        <div className="glass-card rounded-xl p-6 text-center">
+          <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+          <p className="font-medium">Your queue is empty</p>
+          <p className="text-sm text-muted-foreground mt-1">
             No alerts are assigned to <strong>{user?.username}</strong>. A senior analyst or admin can assign alerts to you.
           </p>
         </div>

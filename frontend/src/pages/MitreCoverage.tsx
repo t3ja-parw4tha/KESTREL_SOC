@@ -1,400 +1,356 @@
-import { useState, useMemo } from 'react'
-import { useMitreCoverage } from '@/hooks/useMitre'
-import { CoverageHeatmap } from '@/components/mitre/CoverageHeatmap'
-import { ErrorState } from '@/components/ui/ErrorState'
-import { SpinnerOverlay } from '@/components/ui/Spinner'
-import { toast } from 'sonner'
-import type { MitreTechnique } from '@/types/mitre'
+import { useState } from "react";
+import { Shield, Target, Grid3X3, AlertTriangle } from "lucide-react";
 
-/* ── High-priority techniques used for gap analysis ──────────────────── */
-const HIGH_PRIORITY_TECHNIQUES = [
-  { id: 'T1078', name: 'Valid Accounts', tactic: 'Initial Access' },
-  { id: 'T1110', name: 'Brute Force', tactic: 'Credential Access' },
-  { id: 'T1003', name: 'Credential Dumping', tactic: 'Credential Access' },
-  { id: 'T1059', name: 'Command and Scripting', tactic: 'Execution' },
-  { id: 'T1053', name: 'Scheduled Task', tactic: 'Persistence' },
-  { id: 'T1055', name: 'Process Injection', tactic: 'Defense Evasion' },
-  { id: 'T1071', name: 'Application Layer Protocol', tactic: 'C2' },
-  { id: 'T1486', name: 'Data Encrypted for Impact', tactic: 'Impact' },
-  { id: 'T1190', name: 'Exploit Public Application', tactic: 'Initial Access' },
-  { id: 'T1133', name: 'External Remote Services', tactic: 'Initial Access' },
-]
-
-type GapTechnique = { id: string; name: string; tactic: string }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Coverage Ring — animated SVG ring showing coverage percentage
-   ═══════════════════════════════════════════════════════════════════════ */
-function CoverageRing({ percentage }: { percentage: number }) {
-  const radius = 38
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (percentage / 100) * circumference
-  const color =
-    percentage >= 60 ? '#10b981' : percentage >= 30 ? '#f59e0b' : '#ef4444'
-
-  return (
-    <div className="relative flex items-center justify-center">
-      <svg width="96" height="96" className="-rotate-90">
-        <circle
-          cx="48" cy="48" r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="6"
-          className="text-soc-border"
-        />
-        <circle
-          cx="48" cy="48" r={radius}
-          fill="none"
-          stroke={color}
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className="transition-all duration-1000 ease-out"
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-xl font-bold text-soc-text tabular-nums">{percentage}%</span>
-        <span className="text-[9px] text-soc-muted uppercase tracking-widest">coverage</span>
-      </div>
-    </div>
-  )
+interface Technique {
+  id: string;
+  name: string;
+  detected: boolean;
+  alertCount: number;
+  severity?: "critical" | "high" | "medium" | "low";
+  description?: string;
+  dataSources?: string[];
+  platforms?: string[];
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Stat Card — single metric display
-   ═══════════════════════════════════════════════════════════════════════ */
-function StatCard({ label, value, total, accent }: { label: string; value: number; total: number; accent: string }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0
-  return (
-    <div className="rounded-xl border border-soc-border bg-soc-surface/60 backdrop-blur-sm p-4 flex-1 min-w-[140px]">
-      <p className="text-[10px] text-soc-muted uppercase tracking-wider font-semibold mb-2">{label}</p>
-      <p className="text-2xl font-bold text-soc-text tabular-nums">
-        {value}<span className="text-sm text-soc-muted font-medium"> / {total}</span>
-      </p>
-      <div className="mt-2 h-1.5 rounded-full bg-soc-border overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${accent}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
+interface Tactic {
+  name: string;
+  techniques: Technique[];
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Technique Detail Modal
-   ═══════════════════════════════════════════════════════════════════════ */
-function TechniqueModal({
-  technique,
-  onClose,
-}: {
-  technique: MitreTechnique
-  onClose: () => void
-}) {
-  const count = technique.alert_count ?? 0
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="tech-modal-title"
-    >
-      <div className="bg-soc-surface border border-soc-border rounded-2xl shadow-2xl shadow-black/40 p-6 max-w-md w-full mx-4 animate-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <span className="inline-block text-xs font-mono font-bold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 mb-2">
-              {technique.id}
-            </span>
-            <h2 id="tech-modal-title" className="text-lg font-bold text-soc-text leading-snug">
-              {technique.name}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-soc-muted hover:text-soc-text transition-colors text-xl leading-none mt-1"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+const mitreTactics: Tactic[] = [
+  {
+    name: "Initial Access",
+    techniques: [
+      { id: "T1078", name: "Valid Accounts", detected: true, alertCount: 12, severity: "critical", description: "Adversaries may obtain and abuse credentials of existing accounts.", dataSources: ["Auth Logs", "AD Events"], platforms: ["Windows", "Linux", "Cloud"] },
+      { id: "T1566", name: "Phishing", detected: true, alertCount: 8, severity: "high", description: "Adversaries may send phishing messages to gain access.", dataSources: ["Email Gateway", "Web Proxy"], platforms: ["Windows", "macOS", "Linux"] },
+      { id: "T1190", name: "Exploit Public-Facing App", detected: true, alertCount: 3, severity: "medium", description: "Adversaries may exploit vulnerabilities in internet-facing applications.", dataSources: ["WAF", "IDS"], platforms: ["Windows", "Linux"] },
+      { id: "T1133", name: "External Remote Services", detected: false, alertCount: 0, description: "Adversaries may leverage remote services to access internal networks.", dataSources: ["VPN Logs"], platforms: ["Windows", "Linux"] },
+      { id: "T1200", name: "Hardware Additions", detected: false, alertCount: 0 },
+    ],
+  },
+  {
+    name: "Execution",
+    techniques: [
+      { id: "T1059", name: "Command & Scripting", detected: true, alertCount: 25, severity: "critical", description: "Adversaries may abuse command and script interpreters.", dataSources: ["Sysmon", "EDR"], platforms: ["Windows", "Linux", "macOS"] },
+      { id: "T1204", name: "User Execution", detected: true, alertCount: 6, severity: "high", description: "Adversaries may rely on a user to execute malicious content.", dataSources: ["Sysmon"], platforms: ["Windows", "macOS"] },
+      { id: "T1053", name: "Scheduled Task/Job", detected: true, alertCount: 4, severity: "medium", description: "Adversaries may abuse task scheduling to execute malicious code.", dataSources: ["Sysmon", "Windows Events"], platforms: ["Windows", "Linux"] },
+      { id: "T1047", name: "WMI", detected: true, alertCount: 2, severity: "low", description: "Adversaries may abuse WMI for execution.", dataSources: ["Sysmon"], platforms: ["Windows"] },
+      { id: "T1559", name: "Inter-Process Comm", detected: false, alertCount: 0 },
+    ],
+  },
+  {
+    name: "Persistence",
+    techniques: [
+      { id: "T1547", name: "Boot/Logon Autostart", detected: true, alertCount: 7, severity: "high", description: "Adversaries may configure system settings to automatically execute a program during system boot.", dataSources: ["Registry", "Sysmon"], platforms: ["Windows", "macOS", "Linux"] },
+      { id: "T1136", name: "Create Account", detected: true, alertCount: 3, severity: "medium", description: "Adversaries may create accounts to maintain access.", dataSources: ["AD Events"], platforms: ["Windows", "Linux", "Cloud"] },
+      { id: "T1543", name: "Create/Modify System Process", detected: false, alertCount: 0 },
+      { id: "T1546", name: "Event Triggered Execution", detected: false, alertCount: 0 },
+    ],
+  },
+  {
+    name: "Privilege Escalation",
+    techniques: [
+      { id: "T1548", name: "Abuse Elevation Control", detected: true, alertCount: 5, severity: "high", description: "Adversaries may circumvent mechanisms designed to control elevation of privilege.", dataSources: ["Sysmon", "EDR"], platforms: ["Windows", "macOS", "Linux"] },
+      { id: "T1134", name: "Access Token Manipulation", detected: false, alertCount: 0 },
+      { id: "T1068", name: "Exploitation for Privilege Escalation", detected: true, alertCount: 2, severity: "medium", description: "Adversaries may exploit software vulnerabilities to elevate privileges.", dataSources: ["EDR"], platforms: ["Windows", "Linux"] },
+    ],
+  },
+  {
+    name: "Defense Evasion",
+    techniques: [
+      { id: "T1027", name: "Obfuscated Files", detected: true, alertCount: 15, severity: "high", description: "Adversaries may make files or information difficult to discover.", dataSources: ["Sysmon", "AV"], platforms: ["Windows", "Linux", "macOS"] },
+      { id: "T1070", name: "Indicator Removal", detected: true, alertCount: 4, severity: "medium" },
+      { id: "T1562", name: "Impair Defenses", detected: true, alertCount: 3, severity: "high" },
+      { id: "T1036", name: "Masquerading", detected: false, alertCount: 0 },
+      { id: "T1112", name: "Modify Registry", detected: true, alertCount: 6, severity: "medium" },
+      { id: "T1218", name: "System Binary Proxy", detected: false, alertCount: 0 },
+    ],
+  },
+  {
+    name: "Credential Access",
+    techniques: [
+      { id: "T1110", name: "Brute Force", detected: true, alertCount: 18, severity: "critical", description: "Adversaries may use brute force to attempt access to accounts.", dataSources: ["Auth Logs", "Wazuh"], platforms: ["Windows", "Linux", "Cloud"] },
+      { id: "T1003", name: "OS Credential Dumping", detected: true, alertCount: 5, severity: "critical" },
+      { id: "T1555", name: "Credentials from Password Stores", detected: false, alertCount: 0 },
+      { id: "T1552", name: "Unsecured Credentials", detected: true, alertCount: 2, severity: "low" },
+    ],
+  },
+  {
+    name: "Discovery",
+    techniques: [
+      { id: "T1087", name: "Account Discovery", detected: true, alertCount: 8, severity: "medium" },
+      { id: "T1082", name: "System Info Discovery", detected: true, alertCount: 3, severity: "low" },
+      { id: "T1083", name: "File & Directory Discovery", detected: false, alertCount: 0 },
+      { id: "T1046", name: "Network Service Scan", detected: true, alertCount: 6, severity: "medium" },
+    ],
+  },
+  {
+    name: "Lateral Movement",
+    techniques: [
+      { id: "T1021", name: "Remote Services", detected: true, alertCount: 9, severity: "high" },
+      { id: "T1080", name: "Taint Shared Content", detected: false, alertCount: 0 },
+      { id: "T1550", name: "Use Alternate Auth Material", detected: true, alertCount: 4, severity: "critical" },
+    ],
+  },
+  {
+    name: "Collection",
+    techniques: [
+      { id: "T1005", name: "Data from Local System", detected: true, alertCount: 3, severity: "medium" },
+      { id: "T1114", name: "Email Collection", detected: false, alertCount: 0 },
+      { id: "T1074", name: "Data Staged", detected: true, alertCount: 2, severity: "low" },
+    ],
+  },
+  {
+    name: "Command & Control",
+    techniques: [
+      { id: "T1071", name: "Application Layer Protocol", detected: true, alertCount: 11, severity: "high" },
+      { id: "T1573", name: "Encrypted Channel", detected: true, alertCount: 7, severity: "medium" },
+      { id: "T1105", name: "Ingress Tool Transfer", detected: false, alertCount: 0 },
+      { id: "T1572", name: "Protocol Tunneling", detected: true, alertCount: 3, severity: "high" },
+    ],
+  },
+  {
+    name: "Exfiltration",
+    techniques: [
+      { id: "T1048", name: "Exfil Over Alt Protocol", detected: true, alertCount: 5, severity: "critical" },
+      { id: "T1041", name: "Exfil Over C2 Channel", detected: false, alertCount: 0 },
+      { id: "T1567", name: "Exfil Over Web Service", detected: false, alertCount: 0 },
+    ],
+  },
+  {
+    name: "Impact",
+    techniques: [
+      { id: "T1486", name: "Data Encrypted for Impact", detected: false, alertCount: 0 },
+      { id: "T1489", name: "Service Stop", detected: true, alertCount: 1, severity: "low" },
+      { id: "T1529", name: "System Shutdown/Reboot", detected: false, alertCount: 0 },
+    ],
+  },
+];
 
-        {/* Stats row */}
-        <div className="flex gap-3 mb-4">
-          <div className="flex-1 rounded-lg border border-soc-border bg-soc-bg p-3 text-center">
-            <p className="text-2xl font-bold tabular-nums text-soc-text">{count}</p>
-            <p className="text-[10px] text-soc-muted uppercase tracking-wide">Alerts</p>
-          </div>
-          <div className="flex-1 rounded-lg border border-soc-border bg-soc-bg p-3 text-center">
-            <p className="text-sm font-semibold text-soc-text">{technique.tactic_name ?? '—'}</p>
-            <p className="text-[10px] text-soc-muted uppercase tracking-wide">Tactic</p>
-          </div>
-          <div className="flex-1 rounded-lg border border-soc-border bg-soc-bg p-3 text-center">
-            <p className="text-sm font-semibold text-soc-text capitalize">{count > 0 ? (count > 10 ? 'Hot' : count > 3 ? 'Warm' : 'Low') : 'None'}</p>
-            <p className="text-[10px] text-soc-muted uppercase tracking-wide">Activity</p>
-          </div>
-        </div>
+const totalTechniques = mitreTactics.reduce((s, t) => s + t.techniques.length, 0);
+const detectedTechniques = mitreTactics.reduce((s, t) => s + t.techniques.filter((x) => x.detected).length, 0);
+const coveragePct = Math.round((detectedTechniques / totalTechniques) * 100);
+const tacticsWithDetection = mitreTactics.filter((t) => t.techniques.some((x) => x.detected)).length;
 
-        {/* Description */}
-        {technique.description && (
-          <div className="mb-4">
-            <h3 className="text-xs font-semibold text-soc-muted uppercase tracking-wide mb-1">Description</h3>
-            <p className="text-sm text-soc-text leading-relaxed">{technique.description}</p>
-          </div>
-        )}
+const severityBg: Record<string, string> = {
+  critical: "bg-red-500/20 border-red-500/40 text-red-400",
+  high: "bg-orange-500/20 border-orange-500/40 text-orange-400",
+  medium: "bg-yellow-500/20 border-yellow-500/40 text-yellow-400",
+  low: "bg-blue-500/20 border-blue-500/40 text-blue-400",
+};
 
-        {/* Footer */}
-        <div className="flex justify-end pt-2 border-t border-soc-border">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50 transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+const severityDot: Record<string, string> = {
+  critical: "bg-red-500",
+  high: "bg-orange-500",
+  medium: "bg-yellow-500",
+  low: "bg-blue-500",
+};
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Create Rule Modal
-   ═══════════════════════════════════════════════════════════════════════ */
-const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'] as const
+const defaultSev = { bg: "bg-muted/30 border-border/30 text-muted-foreground/50", dot: "bg-muted" };
 
-function CreateRuleModal({
-  technique,
-  onClose,
-  onSave,
-}: {
-  technique: GapTechnique
-  onClose: () => void
-  onSave: () => void
-}) {
-  const [ruleName, setRuleName] = useState(`Detect ${technique.name}`)
-  const [description, setDescription] = useState('')
-  const [severity, setSeverity] = useState<string>('High')
+const MitreCoverage = () => {
+  const [selectedTechnique, setSelectedTechnique] = useState<Technique | null>(null);
+  const [selectedTactic, setSelectedTactic] = useState<string>("");
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="create-rule-title"
-    >
-      <div className="bg-soc-surface border border-soc-border rounded-2xl shadow-2xl shadow-black/40 p-6 max-w-lg w-full mx-4 animate-in zoom-in-95 duration-200">
-        <h2 id="create-rule-title" className="text-lg font-bold text-soc-text mb-5">
-          New Detection Rule
-          <span className="block text-xs font-normal text-soc-muted mt-1">
-            {technique.id} — {technique.name}
-          </span>
-        </h2>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-[10px] font-semibold text-soc-muted uppercase tracking-wide mb-1.5">Rule Name</label>
-            <input
-              type="text"
-              value={ruleName}
-              onChange={(e) => setRuleName(e.target.value)}
-              className="w-full rounded-lg border border-soc-border bg-soc-bg text-soc-text px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold text-soc-muted uppercase tracking-wide mb-1.5">Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Describe what this rule should detect..."
-              className="w-full rounded-lg border border-soc-border bg-soc-bg text-soc-text px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 resize-y transition-colors"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-semibold text-soc-muted uppercase tracking-wide mb-1.5">Severity</label>
-              <select
-                value={severity}
-                onChange={(e) => setSeverity(e.target.value)}
-                className="w-full rounded-lg border border-soc-border bg-soc-bg text-soc-text px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors"
-              >
-                {SEVERITIES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-semibold text-soc-muted uppercase tracking-wide mb-1.5">Tactic</label>
-              <p className="text-sm text-soc-text rounded-lg border border-soc-border bg-soc-bg px-3 py-2">
-                {technique.tactic}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex gap-2 justify-end mt-6 pt-4 border-t border-soc-border">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50 font-medium transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-soc-bg dark:text-white hover:bg-blue-500 font-medium shadow-lg shadow-blue-600/20 transition-all"
-          >
-            Save as Draft
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Main Page
-   ═══════════════════════════════════════════════════════════════════════ */
-export function MitreCoverage() {
-  const [selectedTechnique, setSelectedTechnique] = useState<MitreTechnique | null>(null)
-  const [ruleModalTechnique, setRuleModalTechnique] = useState<GapTechnique | null>(null)
-
-  const { data, isLoading, isError, refetch } = useMitreCoverage()
-
-  const computedStats = useMemo(() => {
-    if (!data) return null
-    const techniques = data.techniques ?? []
-    const summary = data.summary ?? {}
-    const techniquesDetected = summary.techniques_detected ?? techniques.filter((t) => (t.alert_count ?? 0) > 0).length
-    const totalTechniques = summary.total_techniques ?? techniques.length
-    const tacticsCovered = summary.tactics_covered ?? new Set(techniques.filter((t) => (t.alert_count ?? 0) > 0).map((t) => t.tactic_id)).size
-    const coveragePct = summary.coverage_percentage ?? (totalTechniques ? Math.round((techniquesDetected / totalTechniques) * 1000) / 10 : 0)
-    const detectedIds = new Set(techniques.filter((t) => (t.alert_count ?? 0) > 0).map((t) => t.id))
-    const gaps = HIGH_PRIORITY_TECHNIQUES.filter((t) => !detectedIds.has(t.id))
-    return { techniquesDetected, totalTechniques, tacticsCovered, coveragePct, gaps }
-  }, [data])
-
-  if (isError) return <ErrorState title="Failed to load MITRE coverage" onRetry={() => refetch()} />
-  if (isLoading || !data || !computedStats) return <SpinnerOverlay />
-
-  const { techniquesDetected, totalTechniques, tacticsCovered, coveragePct, gaps } = computedStats
-  const tactics = data.tactics ?? []
-  const techniques = data.techniques ?? []
+  const gaps = mitreTactics
+    .flatMap((t) => t.techniques.filter((x) => !x.detected).map((x) => ({ ...x, tactic: t.name })))
+    .slice(0, 10);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* ── Page Title ─────────────────────────────────────────────────── */}
+    <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-2xl font-bold text-soc-text">MITRE ATT&CK Coverage</h1>
-        <p className="text-sm text-soc-muted mt-0.5">Detection coverage mapped to the MITRE ATT&CK Enterprise framework</p>
+        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
+          <Grid3X3 className="h-5 w-5 text-primary" /> MITRE ATT&CK Coverage
+        </h1>
+        <p className="text-xs text-muted-foreground">Detection coverage across the ATT&CK framework</p>
       </div>
 
-      {/* ── Stats Bar ──────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-4 p-5 rounded-2xl border border-soc-border bg-gradient-to-br from-soc-surface via-soc-surface to-blue-500/5">
-        <CoverageRing percentage={coveragePct} />
-        <div className="flex-1 flex flex-wrap gap-3 min-w-0">
-          <StatCard
-            label="Techniques Detected"
-            value={techniquesDetected}
-            total={totalTechniques}
-            accent="bg-emerald-500"
-          />
-          <StatCard
-            label="Tactics Covered"
-            value={tacticsCovered}
-            total={12}
-            accent="bg-blue-500"
-          />
-          <StatCard
-            label="Detection Gaps"
-            value={gaps.length}
-            total={HIGH_PRIORITY_TECHNIQUES.length}
-            accent="bg-red-500"
-          />
+      {/* KPI Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="glass-card rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Coverage</p>
+              <p className="text-3xl font-bold text-primary">{coveragePct}%</p>
+            </div>
+            <Shield className="h-8 w-8 text-primary/30" />
+          </div>
+          <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full gradient-primary transition-all" style={{ width: `${coveragePct}%` }} />
+          </div>
+        </div>
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Detected</p>
+          <p className="text-3xl font-bold text-green-400">{detectedTechniques}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">of {totalTechniques} techniques</p>
+        </div>
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Gaps</p>
+          <p className="text-3xl font-bold text-destructive">{totalTechniques - detectedTechniques}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">undetected techniques</p>
+        </div>
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Tactics</p>
+          <p className="text-3xl font-bold">{tacticsWithDetection}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">of {mitreTactics.length} with coverage</p>
         </div>
       </div>
 
-      {/* ── Heatmap Matrix ─────────────────────────────────────────────── */}
-      <CoverageHeatmap
-        tactics={tactics}
-        techniques={techniques}
-        onTechniqueClick={(t) => setSelectedTechnique(t)}
-      />
-
-      {/* ── Detection Gaps ─────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-soc-border bg-soc-surface/60 backdrop-blur-sm p-5">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-8 w-1 rounded-full bg-red-500" />
-          <div>
-            <h2 className="text-sm font-bold text-soc-text">Detection Gaps</h2>
-            <p className="text-[11px] text-soc-muted">
-              High-priority techniques with no current detections
-            </p>
-          </div>
-        </div>
-        {gaps.length === 0 ? (
-          <div className="flex items-center gap-2 py-4 px-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-            <span className="text-emerald-400 text-lg">✓</span>
-            <p className="text-sm text-emerald-400 font-medium">
-              All high-priority techniques are covered
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {gaps.map((t) => (
-              <div
-                key={t.id}
-                className="group rounded-xl border border-red-500/20 bg-red-500/5 p-4 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 hover:shadow-lg hover:shadow-red-500/5"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-mono font-bold text-red-400">{t.id}</span>
-                  <span className="text-[10px] text-soc-muted font-medium px-2 py-0.5 rounded-full bg-soc-border/50">
-                    {t.tactic}
-                  </span>
+      {/* Heatmap Grid */}
+      <div className="glass-card rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-4">Technique Heatmap</h2>
+        <div className="overflow-x-auto">
+          <div
+            className="grid gap-1"
+            style={{ gridTemplateColumns: `repeat(${mitreTactics.length}, minmax(90px, 1fr))` }}
+          >
+            {/* Tactic Headers */}
+            {mitreTactics.map((tactic) => {
+              const detected = tactic.techniques.filter((t) => t.detected).length;
+              return (
+                <div key={tactic.name} className="text-center pb-2 border-b border-border/30">
+                  <p className="text-[9px] font-semibold truncate" title={tactic.name}>{tactic.name}</p>
+                  <p className="text-[8px] text-muted-foreground">{detected}/{tactic.techniques.length}</p>
                 </div>
-                <p className="text-sm font-medium text-soc-text mb-1">{t.name}</p>
-                <p className="text-[10px] text-red-400/80 mb-3 flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-                  No detections
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setRuleModalTechnique(t)}
-                  className="w-full py-2 px-3 rounded-lg border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50 hover:border-soc-border text-xs font-semibold transition-all group-hover:border-red-500/30 group-hover:text-red-400"
-                >
-                  Create Detection Rule
-                </button>
-              </div>
+              );
+            })}
+            {/* Technique Cells - row by row */}
+            {Array.from({ length: Math.max(...mitreTactics.map((t) => t.techniques.length)) }).map((_, rowIdx) => (
+              mitreTactics.map((tactic) => {
+                const tech = tactic.techniques[rowIdx];
+                if (!tech) return <div key={`${tactic.name}-${rowIdx}`} />;
+                const sev = tech.severity ?? "low";
+                const cls = tech.detected ? (severityBg[sev] ?? defaultSev.bg) : defaultSev.bg;
+                return (
+                  <button
+                    key={tech.id}
+                    onClick={() => { setSelectedTechnique(tech); setSelectedTactic(tactic.name); }}
+                    className={`rounded p-1 text-[8px] leading-tight transition-all hover:scale-105 hover:z-10 border cursor-pointer text-left ${cls}`}
+                    title={`${tech.id}: ${tech.name}`}
+                  >
+                    <span className="font-mono block">{tech.id}</span>
+                    <span className="block truncate">{tech.name}</span>
+                    {tech.detected && (
+                      <span className="block mt-0.5 font-bold">{tech.alertCount} alerts</span>
+                    )}
+                  </button>
+                );
+              })
             ))}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* ── Modals ─────────────────────────────────────────────────────── */}
-      {selectedTechnique && (
-        <TechniqueModal
-          technique={selectedTechnique}
-          onClose={() => setSelectedTechnique(null)}
-        />
-      )}
+      {/* Gap Analysis */}
+      <div className="glass-card rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-4 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-destructive" /> High Priority Gaps
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {gaps.map((g) => (
+            <div key={g.id} className="flex items-center gap-3 p-2 rounded-lg bg-muted/20 border border-border/30">
+              <span className="font-mono text-[9px] border border-border rounded px-1.5 py-0.5 text-muted-foreground shrink-0">{g.id}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate">{g.name}</p>
+                <p className="text-[10px] text-muted-foreground">{(g as Technique & { tactic: string }).tactic}</p>
+              </div>
+              <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">No detections</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      {ruleModalTechnique && (
-        <CreateRuleModal
-          key={ruleModalTechnique.id}
-          technique={ruleModalTechnique}
-          onClose={() => setRuleModalTechnique(null)}
-          onSave={() => {
-            toast.success('Detection rule saved as draft')
-            setRuleModalTechnique(null)
-          }}
-        />
+      {/* Technique Detail Modal */}
+      {selectedTechnique && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => e.target === e.currentTarget && setSelectedTechnique(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="glass-card-elevated rounded-2xl shadow-2xl shadow-black/40 p-6 max-w-md w-full mx-4">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <span className="inline-block text-xs font-mono font-bold px-2 py-0.5 rounded border border-border text-muted-foreground mb-2">
+                  {selectedTechnique.id}
+                </span>
+                <h2 className="text-base font-bold leading-snug">{selectedTechnique.name}</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Tactic: {selectedTactic}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedTechnique(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none mt-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Detection status */}
+            <div className="mb-4">
+              {selectedTechnique.detected ? (
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded border ${severityBg[selectedTechnique.severity ?? "low"] ?? defaultSev.bg}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${severityDot[selectedTechnique.severity ?? "low"] ?? defaultSev.dot}`} />
+                  {selectedTechnique.alertCount} alerts · {selectedTechnique.severity}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded border bg-destructive/15 text-destructive border-destructive/30">
+                  Not Detected
+                </span>
+              )}
+            </div>
+
+            {selectedTechnique.description && (
+              <p className="text-xs text-muted-foreground leading-relaxed mb-4">{selectedTechnique.description}</p>
+            )}
+
+            {selectedTechnique.dataSources && (
+              <div className="mb-4">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Data Sources</p>
+                <div className="flex flex-wrap gap-1">
+                  {selectedTechnique.dataSources.map((ds) => (
+                    <span key={ds} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{ds}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedTechnique.platforms && (
+              <div className="mb-4">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Platforms</p>
+                <div className="flex flex-wrap gap-1">
+                  {selectedTechnique.platforms.map((p) => (
+                    <span key={p} className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground">{p}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end pt-4 border-t border-border/50">
+              {selectedTechnique.detected && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg gradient-primary text-primary-foreground"
+                  onClick={() => setSelectedTechnique(null)}
+                >
+                  <Target className="h-3 w-3" /> View Alerts
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedTechnique(null)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
-  )
-}
+  );
+};
+
+export default MitreCoverage;
