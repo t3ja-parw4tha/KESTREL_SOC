@@ -16,7 +16,7 @@ anyio==4.12.1
     # via
     #   -c requirements/base.txt
     #   httpx
-authlib==1.6.8
+authlib==1.6.9
     # via safety
 bandit==1.9.4
     # via -r requirements/dev.in
@@ -52,14 +52,6 @@ click==8.3.1
     #   pip-tools
     #   safety
     #   typer
-colorama==0.4.6
-    # via
-    #   -c requirements/base.txt
-    #   bandit
-    #   build
-    #   click
-    #   pytest
-    #   tqdm
 coverage[toml]==7.13.4
     # via pytest-cov
 cryptography==46.0.5
@@ -106,9 +98,7 @@ idna==3.11
 iniconfig==2.3.0
     # via pytest
 jinja2==3.1.6
-    # via
-    #   -c requirements/base.txt
-    #   safety
+    # via safety
 joblib==1.5.3
     # via nltk
 librt==0.8.1
@@ -145,6 +135,7 @@ packageurl-python==0.17.6
     # via cyclonedx-python-lib
 packaging==26.0
     # via
+    #   -c requirements/base.txt
     #   black
     #   build
     #   dparse
@@ -265,12 +256,27 @@ tqdm==4.67.3
     #   nltk
 typer==0.24.1
     # via safety
+types-bleach==6.3.0.20251115
+    # via -r requirements/dev.in
+types-html5lib==1.1.11.20251117
+    # via types-bleach
+types-passlib==1.7.7.20260211
+    # via -r requirements/dev.in
+types-pyasn1==0.6.0.20260319
+    # via types-python-jose
+types-python-jose==3.5.0.20250531
+    # via -r requirements/dev.in
+types-webencodings==0.5.0.20251108
+    # via types-html5lib
 typing-extensions==4.15.0
     # via
     #   -c requirements/base.txt
+    #   anyio
+    #   cyclonedx-python-lib
     #   mypy
     #   pydantic
     #   pydantic-core
+    #   pytest-asyncio
     #   safety
     #   safety-schemas
     #   typing-inspection
@@ -278,12 +284,6 @@ typing-inspection==0.4.2
     # via
     #   -c requirements/base.txt
     #   pydantic
-types-bleach==6.3.0.20251115
-    # via -r requirements/dev.in
-types-passlib==1.7.7.20260211
-    # via -r requirements/dev.in
-types-python-jose==3.5.0.20250531
-    # via -r requirements/dev.in
 urllib3==2.6.3
     # via requests
 virtualenv==21.1.0
