@@ -284,7 +284,8 @@ async def sso_callback(
             },
         )
         if token_resp.status_code != 200:
-            logger.error("Token exchange failed: %s", token_resp.text)
+            # Do not log response body — may contain tokens or secrets.
+            logger.error("OAuth code exchange failed: HTTP %s", token_resp.status_code)
             return RedirectResponse("/?error=token_exchange_failed")
             
         token_data = token_resp.json()
@@ -305,8 +306,9 @@ async def sso_callback(
                 audience=provider.client_id,
                 issuer=oidc_config.get("issuer", provider.issuer_url),
             )
-        except pyjwt.InvalidTokenError as e:
-            logger.error("ID Token verification failed: %s", e)
+        except pyjwt.InvalidTokenError:
+            # Do not log exception text — may leak token material.
+            logger.error("ID Token verification failed")
             return RedirectResponse("/?error=invalid_id_token")
 
     # Validate nonce

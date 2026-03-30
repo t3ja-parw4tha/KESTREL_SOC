@@ -2,7 +2,8 @@
 
 import logging
 from typing import Any
-import xml.etree.ElementTree as ET
+
+import defusedxml.ElementTree as ET
 
 import httpx
 

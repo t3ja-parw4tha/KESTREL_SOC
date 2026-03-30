@@ -17,7 +17,7 @@ from pathlib import Path
 
 import jwt as pyjwt
 from jwt.exceptions import InvalidTokenError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
@@ -198,12 +198,16 @@ async def get_recent_failure_count(db: AsyncSession, username: str) -> int:
     settings = get_settings()
     lock_min = getattr(settings, "lockout_minutes", 15)
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=lock_min)
-    stmt = select(FailedLogin).where(
-        FailedLogin.username == username,
-        FailedLogin.attempted_at >= cutoff,
+    stmt = (
+        select(func.count())
+        .select_from(FailedLogin)
+        .where(
+            FailedLogin.username == username,
+            FailedLogin.attempted_at >= cutoff,
+        )
     )
     result = await db.execute(stmt)
-    return len(result.scalars().all())
+    return int(result.scalar_one() or 0)
 
 
 async def check_lockout(db: AsyncSession, username: str) -> tuple[bool, datetime | None]:
@@ -245,12 +249,12 @@ async def record_failed_login(
     lock_min = getattr(settings, "lockout_minutes", 15)
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=lock_min)
     stmt = (
-        select(FailedLogin)
+        select(func.count())
+        .select_from(FailedLogin)
         .where(FailedLogin.username == username, FailedLogin.attempted_at >= cutoff)
-        .order_by(FailedLogin.attempted_at.desc())
     )
     result = await db.execute(stmt)
-    count = len(result.scalars().all())
+    count = int(result.scalar_one() or 0)
     if count >= ALERT_FAILURE_THRESHOLD:
         logger.warning(
             "SOC alert: %d consecutive failed logins for user=%s from ip=%s",

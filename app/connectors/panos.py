@@ -1,8 +1,9 @@
 """Palo Alto NGFW (PAN-OS) pull connector via XML API."""
 
 import logging
-import xml.etree.ElementTree as ET
 from typing import Any
+
+import defusedxml.ElementTree as ET
 
 import httpx
 
