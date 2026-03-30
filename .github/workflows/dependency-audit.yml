@@ -50,7 +50,7 @@ jobs:
           semgrep scan --config auto --config p/python --config p/security-audit --config p/owasp-top-ten --error --json --output semgrep-report.json app/
 
       - name: Upload security reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: python-security-reports
@@ -90,7 +90,7 @@ jobs:
           npx eslint src/ --format json --output-file eslint-security-report.json
 
       - name: Upload frontend reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: frontend-security-reports
