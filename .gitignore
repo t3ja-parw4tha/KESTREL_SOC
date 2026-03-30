@@ -93,3 +93,7 @@ premium-ui-redesign-main/
 
 # Lovable design reference — not part of main project
 kestrel-core-engine-main/
+
+# Local security tool outputs (repo root)
+/bandit-report.json
+/audit-report.json
