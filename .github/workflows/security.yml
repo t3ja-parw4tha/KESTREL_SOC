@@ -1,3 +1,5 @@
+# Dependabot and fork PRs do not receive repository secrets; Safety (PyUp) needs SAFETY_API_KEY.
+# Skip the real Safety run for those triggers and rely on pip-audit in this job for CVE signal.
 name: Security Scan
 
 on:
@@ -37,12 +39,24 @@ jobs:
             && echo "pip-audit: no CVEs" \
             || { echo "pip-audit CVEs found — review audit-report.json"; exit 1; }
       - name: Run safety check
-        # tee preserves exit code via PIPESTATUS; fails closed on any vulnerability.
+        if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        env:
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
         run: |
-          safety check --json | tee safety-report.json
-          test "${PIPESTATUS[0]}" -eq 0 \
-            && echo "Safety: clean" \
-            || { echo "Safety vulnerabilities found — review safety-report.json"; exit 1; }
+          if [ -z "${SAFETY_API_KEY:-}" ]; then
+            echo '{"skipped": true, "reason": "SAFETY_API_KEY not set; add repo secret to enforce PyUp Safety. pip-audit still ran."}' > safety-report.json
+            exit 0
+          fi
+          python -m venv .venv-safety
+          .venv-safety/bin/pip install --upgrade pip
+          .venv-safety/bin/pip install "safety==2.3.5"
+          set -o pipefail
+          .venv-safety/bin/safety check -r requirements/base.txt --output json | tee safety-report.json
+
+      - name: Safety report placeholder (Dependabot / fork PRs)
+        if: ${{ github.actor == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+        run: |
+          echo '{"skipped": true, "reason": "Dependabot or fork PR — SAFETY_API_KEY unavailable; pip-audit still ran."}' > safety-report.json
       - name: Run Semgrep SAST
         # --error: exit 1 on any finding. Covers OWASP top 10 + security-audit ruleset.
         run: |
