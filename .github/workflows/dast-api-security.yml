@@ -14,7 +14,7 @@ jobs:
   api-security-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -224,7 +224,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [api-security-smoke]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
