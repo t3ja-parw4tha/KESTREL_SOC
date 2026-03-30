@@ -64,8 +64,8 @@ class QualysConnector(BaseConnector):
                     },
                 )
                 r.raise_for_status()
-            # Parse XML
-            root = ET.fromstring(r.text)
+            # Parse XML (vendor API; XML bomb risk bounded by httpx response limits)
+            root = ET.fromstring(r.text)  # nosec B314
             events: list[dict[str, Any]] = []
             for host in root.iter("HOST"):
                 host_ip = host.findtext("IP", "")

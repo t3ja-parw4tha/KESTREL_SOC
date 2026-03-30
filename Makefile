@@ -5,7 +5,7 @@
 
 # Run all Python security checks
 security:
-	bandit -r app/ -ll
+	bandit -c pyproject.toml -r app/ -ll
 	pip-audit -r requirements/base.txt
 	safety check -r requirements/base.txt
 	@echo "Semgrep: run in CI (no Windows support)"

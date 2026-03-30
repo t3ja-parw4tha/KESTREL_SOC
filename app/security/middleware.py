@@ -62,7 +62,7 @@ def get_real_ip(request: Request) -> str:
                 continue
     if request.client:
         return request.client.host
-    return "0.0.0.0"
+    return "unknown"
 
 
 def _get_rate_tier(path: str, method: str) -> str:

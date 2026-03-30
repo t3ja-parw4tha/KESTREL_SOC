@@ -55,7 +55,7 @@ jobs:
 
       - name: Bandit SAST scan
         run: |
-          bandit -r app/ -ll -f json -o bandit-report.json
+          bandit -c pyproject.toml -r app/ -ll -f json -o bandit-report.json
 
       - name: Semgrep SAST scan
         run: |

@@ -60,7 +60,20 @@ def run_bandit() -> dict:
     """Run bandit SAST, return summary."""
     try:
         subprocess.run(
-            [sys.executable, "-m", "bandit", "-r", "app/", "-ll", "-f", "json", "-o", str(REPO_ROOT / "bandit-report.json")],
+            [
+                sys.executable,
+                "-m",
+                "bandit",
+                "-c",
+                str(REPO_ROOT / "pyproject.toml"),
+                "-r",
+                "app/",
+                "-ll",
+                "-f",
+                "json",
+                "-o",
+                str(REPO_ROOT / "bandit-report.json"),
+            ],
             cwd=REPO_ROOT,
             capture_output=True,
             timeout=60,

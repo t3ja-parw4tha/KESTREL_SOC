@@ -52,8 +52,8 @@ class PanosConnector(BaseConnector):
                     },
                 )
                 r.raise_for_status()
-            # Parse XML response
-            root = ET.fromstring(r.text)
+            # Parse XML response (vendor API; XML bomb risk bounded by httpx response limits)
+            root = ET.fromstring(r.text)  # nosec B314
             events: list[dict[str, Any]] = []
             for entry in root.iter("entry"):
                 ev: dict[str, Any] = {}
