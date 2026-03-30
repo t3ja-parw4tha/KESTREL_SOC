@@ -1,3 +1,6 @@
+# NOTE: `docker build -f docker/Dockerfile .` uses the repo root as context.
+# Only the root `.dockerignore` is applied. Keep that file authoritative.
+
 .venv
 venv
 __pycache__

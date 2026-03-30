@@ -1,3 +1,6 @@
+# Dependabot PRs use a read-only GITHUB_TOKEN and do not receive repository secrets.
+# Skip Safety (needs SAFETY_API_KEY) and SARIF upload (needs security-events: write) for those runs.
+# pip-audit / npm audit / Trivy / Bandit / Semgrep still run; CVE signal remains.
 name: Dependency Security Audit
 
 on:
@@ -25,7 +28,7 @@ jobs:
           cache: 'pip'
 
       - name: Install audit tools
-        run: pip install pip-audit safety bandit pip-tools
+        run: pip install pip-audit bandit pip-tools
 
       - name: Install Semgrep (Linux)
         run: pip install semgrep
@@ -35,11 +38,20 @@ jobs:
           pip-audit -r requirements/base.txt --format json --output pip-audit-report.json
 
       - name: Safety check
+        if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
-          pip install "safety==2.3.5"
-          safety check -r requirements/base.txt --output json > safety-report.json
+          # Safety 2.3.5 pins packaging<22; installing it in the main env breaks pip-audit/build.
+          python -m venv .venv-safety
+          .venv-safety/bin/pip install --upgrade pip
+          .venv-safety/bin/pip install "safety==2.3.5"
+          .venv-safety/bin/safety check -r requirements/base.txt --output json > safety-report.json
         env:
           SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
+
+      - name: Safety report placeholder (Dependabot / fork PRs)
+        if: ${{ github.actor == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+        run: |
+          echo '{"skipped": true, "reason": "Secrets not available on Dependabot or fork PRs; pip-audit still ran."}' > safety-report.json
 
       - name: Bandit SAST scan
         run: |
@@ -118,7 +130,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload Trivy results to GitHub Security
-        if: always()
+        if: ${{ always() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
