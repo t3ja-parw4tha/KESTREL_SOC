@@ -335,6 +335,43 @@
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  /* ── Animated gradient background ──────────────────────────────────────── */
+  .gradient-bg-animated {
+    background: linear-gradient(
+      -45deg,
+      hsl(222, 47%, 6%),
+      hsl(232, 60%, 8%),
+      hsl(250, 50%, 7%),
+      hsl(217, 55%, 6%)
+    );
+    background-size: 400% 400%;
+    animation: gradient-shift 15s ease infinite;
+  }
+
+  /* ── Glow ring ──────────────────────────────────────────────────────────── */
+  .glow-ring {
+    box-shadow:
+      0 0 0 2px hsl(var(--primary) / 0.2),
+      0 0 20px hsl(var(--primary) / 0.1);
+  }
+
+  /* ── Hover scale ────────────────────────────────────────────────────────── */
+  .hover-scale {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-scale:hover { transform: scale(1.03); }
+
+  /* ── Noise overlay ──────────────────────────────────────────────────────── */
+  .noise-overlay::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-size: 256px 256px;
+    pointer-events: none;
+  }
+
   /* ── Scrollbar ──────────────────────────────────────────────────────────── */
   .scrollbar-thin {
     scrollbar-width: thin;
@@ -350,6 +387,11 @@
 
 @layer utilities {
   .tabular-nums { font-variant-numeric: tabular-nums; }
+  .animate-float      { animation: float 6s ease-in-out infinite; }
+  .animate-scale-in   { animation: scale-in 0.3s ease-out forwards; }
+  .animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+  .animate-slide-up   { animation: slide-up 0.5s ease-out forwards; }
+  .animate-fade-in    { animation: fade-in 0.4s ease-out forwards; }
 }
 
 /* ── Keyframes ────────────────────────────────────────────────────────────── */
@@ -361,6 +403,36 @@
 @keyframes shimmer {
   from { background-position: -200% 0; }
   to   { background-position: 200% 0; }
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50%       { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%       { transform: translateY(-12px) scale(1.02); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.12); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ── Print / PDF Report Styles ────────────────────────────────────────────── */

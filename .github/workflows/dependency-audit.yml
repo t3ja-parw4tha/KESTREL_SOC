@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: '0 6 * * *'
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   python-audit:
     runs-on: ubuntu-latest
@@ -28,24 +32,22 @@ jobs:
 
       - name: pip-audit (CVE check)
         run: |
-          pip-audit -r requirements/base.txt --format json --output pip-audit-report.json || true
+          pip-audit -r requirements/base.txt --format json --output pip-audit-report.json
 
       - name: Safety check
         run: |
           pip install "safety==2.3.5"
-          safety check -r requirements/base.txt --output json > safety-report.json 2>/dev/null || echo '{"vulnerabilities":[]}' > safety-report.json
+          safety check -r requirements/base.txt --output json > safety-report.json
         env:
           SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
 
       - name: Bandit SAST scan
         run: |
-          bandit -r app/ -ll -f json -o bandit-report.json --exit-zero || true
-          bandit -r app/ -ll
+          bandit -r app/ -ll -f json -o bandit-report.json
 
       - name: Semgrep SAST scan
         run: |
-          semgrep scan --config auto --config p/python --config p/security-audit --config p/owasp-top-ten --json --output semgrep-report.json app/ || true
-          semgrep scan --config auto --config p/python --config p/security-audit app/
+          semgrep scan --config auto --config p/python --config p/security-audit --config p/owasp-top-ten --error --json --output semgrep-report.json app/
 
       - name: Upload security reports
         uses: actions/upload-artifact@v4
@@ -77,14 +79,15 @@ jobs:
       - name: npm audit
         run: |
           cd frontend
-          npm audit --audit-level=high --json > npm-audit-report.json 2>/dev/null || echo '{}' > npm-audit-report.json
+          npm audit --audit-level=high --json > npm-audit-report.json
           npm audit --audit-level=high
 
       - name: ESLint security scan
+        # Exit 1 only on errors (e.g. eval, unsanitized DOM). Security rules are mostly "warn"
+        # (detect-object-injection is noisy for React patterns); report is still uploaded as artifact.
         run: |
           cd frontend
-          npx eslint src/ --max-warnings 0 -o eslint-security-report.json 2>/dev/null || true
-        continue-on-error: true
+          npx eslint src/ --format json --output-file eslint-security-report.json
 
       - name: Upload frontend reports
         uses: actions/upload-artifact@v4
@@ -105,7 +108,7 @@ jobs:
         run: docker build -f docker/Dockerfile -t soc-platform:test .
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: 'soc-platform:test'
           format: 'sarif'
@@ -115,7 +118,8 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -127,7 +131,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog secret scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.93.8
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}

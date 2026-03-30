@@ -98,6 +98,11 @@ export async function patch<T>(url: string, data?: unknown, config?: AxiosReques
   return res.data
 }
 
+export async function put<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+  const res: AxiosResponse<T> = await apiClient.put(url, data, config)
+  return res.data
+}
+
 export async function del<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const res: AxiosResponse<T> = await apiClient.delete(url, config)
   return res.data

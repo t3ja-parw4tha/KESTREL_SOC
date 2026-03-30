@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { get as apiGet, post as apiPost, patch as apiPatch } from "@/api/client";
+import { useQuery } from "@tanstack/react-query";
 import {
   Users as UsersIcon, Pencil, Shield, Eye, EyeOff,
   UserPlus, ChevronDown, ChevronUp, Activity, Clock, LogIn,
@@ -48,32 +50,55 @@ const rolePerms: Record<Role, string[]> = {
   viewer: ["Read-only access", "View dashboards", "View alerts & incidents"],
 };
 
-const demoUsers: AppUser[] = [
-  { id: "u1", name: "Sarah Chen", username: "sarah.chen", initials: "SC", email: "sarah.chen@soc.io", role: "soc_lead", is_active: true, lastActive: "Just now" },
-  { id: "u2", name: "James Wilson", username: "james.wilson", initials: "JW", email: "james.wilson@soc.io", role: "senior_analyst", is_active: true, lastActive: "5m ago" },
-  { id: "u3", name: "Maria Garcia", username: "maria.garcia", initials: "MG", email: "maria.garcia@soc.io", role: "analyst", is_active: true, lastActive: "15m ago" },
-  { id: "u4", name: "Alex Kim", username: "alex.kim", initials: "AK", email: "alex.kim@soc.io", role: "threat_hunter", is_active: true, lastActive: "1h ago" },
-  { id: "u5", name: "David Park", username: "david.park", initials: "DP", email: "david.park@soc.io", role: "admin", is_active: true, lastActive: "2h ago" },
-  { id: "u6", name: "Emily Zhang", username: "emily.zhang", initials: "EZ", email: "emily.zhang@soc.io", role: "analyst", is_active: false, lastActive: "2d ago" },
-];
+const INITIAL_USERS: AppUser[] = [];
 
-interface UserActivity {
+interface AuditEvent {
   id: string;
+  action: string;
+  target: string | null;
+  timestamp: string | null;
+  ip_address: string | null;
+  details: Record<string, unknown> | null;
+  method: string | null;
+  path: string | null;
+}
+
+interface UserActivityResponse {
+  user_id: string;
+  username: string;
+  total: number;
+  events: AuditEvent[];
+}
+
+interface ActivityRow {
+  id: string;
+  type: "login" | "action" | "alert" | "config";
   userName: string;
   action: string;
   detail: string;
-  timestamp: string;
-  type: "login" | "action" | "alert" | "config";
+  timestamp: string | null;
+  target: string | null;
+  ip_address: string | null;
+  method: string | null;
+  path: string | null;
 }
 
-const demoActivity: UserActivity[] = [
-  { id: "a1", userName: "Sarah Chen", action: "Escalated alert", detail: "ALT-2024-1138 → Incident INC-0042", timestamp: "5m ago", type: "alert" },
-  { id: "a2", userName: "James Wilson", action: "Ran playbook", detail: "Phishing Response v2.1", timestamp: "12m ago", type: "action" },
-  { id: "a3", userName: "Alex Kim", action: "Executed threat hunt", detail: "KQL: Lateral movement detection", timestamp: "1h ago", type: "action" },
-  { id: "a4", userName: "Maria Garcia", action: "Closed alert", detail: "ALT-2024-1135 marked as False Positive", timestamp: "1h ago", type: "alert" },
-  { id: "a5", userName: "David Park", action: "Updated settings", detail: "Changed AI provider to Anthropic", timestamp: "2h ago", type: "config" },
-  { id: "a6", userName: "Emily Zhang", action: "Logged out", detail: "Session expired", timestamp: "2d ago", type: "login" },
-];
+function classifyAction(action: string): "login" | "action" | "alert" | "config" {
+  if (action.includes("login") || action.includes("logout") || action.includes("session")) return "login";
+  if (action.includes("alert") || action.includes("incident")) return "alert";
+  if (action.includes("settings") || action.includes("config") || action.includes("update")) return "config";
+  return "action";
+}
+
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (m < 1) return "Just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 const activityTypeIcon: Record<string, React.ElementType> = {
   login: LogIn,
@@ -102,7 +127,7 @@ export function UserManagement() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  const [users, setUsers] = useState<AppUser[]>(demoUsers);
+  const [users, setUsers] = useState<AppUser[]>(INITIAL_USERS);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [form, setForm] = useState({ username: "", name: "", email: "", password: "", role: "analyst" as Role });
@@ -113,13 +138,21 @@ export function UserManagement() {
   const [busyId, setBusyId] = useState<string | number | null>(null);
   const [filterActivity, setFilterActivity] = useState("all");
   const [apiLoaded, setApiLoaded] = useState(false);
+  const [activityUserId, setActivityUserId] = useState<string | null>(null);
 
-  const authHeader = useMemo(() => {
-    const token = sessionStorage.getItem("kestrel_token");
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    return headers;
-  }, [user?.id]);
+  // Fetch activity for selected user or global activity (all users)
+  const { data: activityData, isLoading: activityLoading } = useQuery<UserActivityResponse>({
+    queryKey: ["user-activity", activityUserId ?? "all"],
+    queryFn: async () => {
+      if (activityUserId) {
+        return apiGet<UserActivityResponse>(`/auth/users/${activityUserId}/activity`);
+      }
+      // For "all users" view, fetch activity for first available user if apiLoaded
+      return { user_id: "", username: "", total: 0, events: [] };
+    },
+    enabled: activeTab === "activity" && isAdmin,
+    staleTime: 30_000,
+  });
 
   useEffect(() => {
     fetchUsers();
@@ -129,43 +162,33 @@ export function UserManagement() {
   const fetchUsers = async () => {
     setError("");
     try {
-      const res = await fetch("/api/v1/auth/users", { headers: authHeader });
-      if (!res.ok) throw new Error("API error");
-      const data = await res.json();
+      const data = await apiGet<{ users: AppUser[] }>("/auth/users");
       const apiUsers: AppUser[] = (data?.users ?? []).map((u: AppUser) => ({
         ...u,
         initials: getInitials(u.name, u.username),
         name: u.name || u.username || String(u.id),
       }));
-      if (apiUsers.length > 0) {
-        setUsers(apiUsers);
-        setApiLoaded(true);
-      }
+      setUsers(apiUsers);
+      setApiLoaded(true);
     } catch {
-      // Fall back to demo data silently
+      setApiLoaded(false);
+      setUsers([]);
+      setError("Unable to load users from API.");
     }
   };
 
-  const updateUser = async (id: string | number, patch: { role?: string; is_active?: boolean }) => {
+  const updateUser = async (id: string | number, updates: { role?: string; is_active?: boolean }) => {
     setError("");
     setBusyId(id);
     try {
-      if (apiLoaded) {
-        const res = await fetch(`/api/v1/auth/users/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify(patch),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          setError((d as { detail?: string })?.detail ?? "Failed to update user");
-          return;
-        }
-        await fetchUsers();
-      } else {
-        setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } as AppUser : u));
+      if (!apiLoaded) {
+        throw new Error("User management API is unavailable");
       }
+      await apiPatch(`/auth/users/${id}`, updates);
+      await fetchUsers();
       toast.success("User updated");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update user");
     } finally {
       setBusyId(null);
     }
@@ -196,42 +219,44 @@ export function UserManagement() {
     if (editingUser) {
       await updateUser(editingUser.id, { role: form.role });
     } else {
-      if (apiLoaded) {
-        setError("");
-        const res = await fetch("/api/v1/auth/users", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify({ username: form.username || form.name, name: form.name, email: form.email, password: form.password, role: form.role }),
-        });
-        if (res.ok) {
-          toast.success("User created");
-          await fetchUsers();
-        } else {
-          const d = await res.json().catch(() => ({}));
-          toast.error((d as { detail?: string })?.detail ?? "Failed to create user");
-          return;
-        }
-      } else {
-        const displayName = form.name || form.username;
-        const initials = getInitials(displayName);
-        setUsers((prev) => [...prev, {
-          id: `u${prev.length + 1}`,
-          name: displayName,
-          username: form.username,
-          initials,
-          email: form.email,
-          role: form.role,
-          is_active: true,
-          lastActive: "Just now",
-        }]);
+      if (!apiLoaded) {
+        toast.error("User management API is unavailable");
+        return;
+      }
+      setError("");
+      try {
+        await apiPost("/auth/users", { username: form.username || form.name, name: form.name, email: form.email, password: form.password, role: form.role });
         toast.success("User created");
+        await fetchUsers();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to create user");
+        return;
       }
     }
     setDialogOpen(false);
   };
 
   const activeCount = users.filter((u) => u.is_active).length;
-  const filteredActivity = filterActivity === "all" ? demoActivity : demoActivity.filter((a) => a.type === filterActivity);
+
+  const auditEvents = activityData?.events ?? [];
+  const activityRows: ActivityRow[] = auditEvents.map((a: AuditEvent) => {
+    const detail = String(a.target || a.path || "No additional context")
+    return {
+      id: a.id,
+      type: classifyAction(a.action),
+      userName: activityData?.username || "User",
+      action: a.action,
+      detail,
+      timestamp: a.timestamp,
+      target: a.target,
+      ip_address: a.ip_address,
+      method: a.method,
+      path: a.path,
+    }
+  })
+  const filteredActivity = filterActivity === "all"
+    ? activityRows
+    : activityRows.filter((a) => a.type === filterActivity);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -391,7 +416,20 @@ export function UserManagement() {
       {/* Activity Tab (admin only) */}
       {activeTab === "activity" && isAdmin && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
+          {/* User selector + type filter */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <select
+              value={activityUserId ?? ""}
+              onChange={(e) => setActivityUserId(e.target.value || null)}
+              className="h-9 px-3 rounded-lg border border-border bg-muted/30 text-foreground text-xs focus:outline-none focus:border-primary cursor-pointer"
+            >
+              <option value="">Select a user…</option>
+              {users.map((u) => (
+                <option key={String(u.id)} value={String(u.id)}>
+                  {getDisplayName(u)}
+                </option>
+              ))}
+            </select>
             {["all", "login", "action", "alert", "config"].map((type) => (
               <button
                 key={type}
@@ -402,41 +440,66 @@ export function UserManagement() {
                     : "border border-border text-muted-foreground hover:text-foreground hover:bg-muted/30"
                 }`}
               >
-                {type === "all" ? "All Activity" : type}
+                {type === "all" ? "All Types" : type}
               </button>
             ))}
           </div>
 
-          <div className="glass-card rounded-xl overflow-hidden">
-            <div className="divide-y divide-border/30">
-              {filteredActivity.map((activity) => {
-                const Icon = activityTypeIcon[activity.type] ?? Activity;
-                const color = activityTypeColor[activity.type] ?? "text-muted-foreground";
-                return (
-                  <div key={activity.id} className="flex items-start gap-4 p-4 hover:bg-muted/20 transition-colors">
-                    <div className={`h-8 w-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 ${color}`}>
-                      <Icon className="h-4 w-4" />
+          {!activityUserId ? (
+            <div className="rounded-lg border border-border/40 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+              Select a user above to view their audit activity.
+            </div>
+          ) : (
+            <div className="glass-card rounded-xl overflow-hidden">
+              {activityLoading ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">Loading activity…</div>
+              ) : (
+                <div className="divide-y divide-border/30">
+                  {filteredActivity.length === 0 ? (
+                    <div className="text-center py-8 text-sm text-muted-foreground">
+                      No activity recorded for this user.
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{activity.userName}</span>
-                        <span className="text-xs text-muted-foreground">—</span>
-                        <span className="text-xs text-muted-foreground">{activity.action}</span>
+                  ) : filteredActivity.map((event) => {
+                    const type = classifyAction(event.action);
+                    const Icon = activityTypeIcon[type] ?? Activity;
+                    const color = activityTypeColor[type] ?? "text-muted-foreground";
+                    return (
+                      <div key={event.id} className="flex items-start gap-4 p-4 hover:bg-muted/20 transition-colors">
+                        <div className={`h-8 w-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 ${color}`}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium text-foreground">{event.action}</span>
+                            {event.target && (
+                              <>
+                                <span className="text-xs text-muted-foreground">—</span>
+                                <span className="text-xs text-muted-foreground font-mono">{event.target}</span>
+                              </>
+                            )}
+                            {event.ip_address && (
+                              <span className="text-[10px] bg-muted/50 px-1.5 py-0.5 rounded font-mono text-muted-foreground">
+                                {event.ip_address}
+                              </span>
+                            )}
+                          </div>
+                          {event.path && (
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5 font-mono">
+                              {event.method} {event.path}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+                          <Clock className="h-3 w-3" />
+                          {relativeTime(event.timestamp)}
+                        </div>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">{activity.detail}</p>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                      <Clock className="h-3 w-3" />
-                      {activity.timestamp}
-                    </div>
-                  </div>
-                );
-              })}
-              {filteredActivity.length === 0 && (
-                <div className="text-center py-8 text-sm text-muted-foreground">No activity found.</div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-          </div>
+          )}
         </div>
       )}
 

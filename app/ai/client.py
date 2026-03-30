@@ -29,21 +29,33 @@ async def run_ai_triage(alert_dict: dict) -> dict:
     system, prompt = build_triage_prompt(alert_dict)
 
     try:
-        if provider == "openai":
-            from app.ai.providers.openai import call_openai
-            raw = await call_openai(prompt, system)
-        elif provider == "anthropic":
-            from app.ai.providers.anthropic import call_anthropic
-            raw = await call_anthropic(prompt, system)
-        elif provider == "azure":
-            from app.ai.providers.azure import call_azure
-            raw = await call_azure(prompt, system)
-        else:
-            logger.warning("Unknown AI provider %r, using OpenAI", provider)
-            from app.ai.providers.openai import call_openai
-            raw = await call_openai(prompt, system)
+        raw = await run_ai_completion(system=system, prompt=prompt)
 
         return _parse_triage_response(raw) if raw else {}
     except Exception as e:
         logger.warning("AI triage failed (%s): %s", provider, e)
         return {}
+
+
+async def run_ai_completion(system: str, prompt: str) -> str:
+    """Run a generic completion against the configured AI provider."""
+    settings = get_settings()
+    provider = settings.ai_provider
+
+    if provider == "openai":
+        from app.ai.providers.openai import call_openai
+
+        return await call_openai(prompt, system)
+    if provider == "anthropic":
+        from app.ai.providers.anthropic import call_anthropic
+
+        return await call_anthropic(prompt, system)
+    if provider == "azure":
+        from app.ai.providers.azure import call_azure
+
+        return await call_azure(prompt, system)
+
+    logger.warning("Unknown AI provider %r, using OpenAI", provider)
+    from app.ai.providers.openai import call_openai
+
+    return await call_openai(prompt, system)

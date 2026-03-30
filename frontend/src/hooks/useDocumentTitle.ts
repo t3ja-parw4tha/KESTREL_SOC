@@ -6,6 +6,7 @@ const PATH_TITLES: Record<string, string> = {
   '/app': 'Dashboard',
   '/app/alerts': 'Alerts',
   '/app/incidents': 'Incidents',
+  '/app/assets': 'Assets',
   '/app/mitre': 'MITRE Coverage',
   '/app/sources': 'Sources',
   '/app/hunting': 'Threat Hunting',

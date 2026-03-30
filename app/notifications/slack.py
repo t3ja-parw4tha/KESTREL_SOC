@@ -59,7 +59,7 @@ async def send_slack_alert(webhook_url: str, alert_payload: dict[str, Any]) -> b
     summary = _safe_str(alert_payload.get("ai_summary") or alert_payload.get("title") or "")
 
     text = f"*{_truncate(title, 200)}*\nSeverity: {severity} | Source: {source}\n{_truncate(summary, 1000)}"
-    blocks = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "section",
             "text": {"type": "mrkdwn", "text": text},
@@ -81,12 +81,12 @@ async def send_slack_alert(webhook_url: str, alert_payload: dict[str, Any]) -> b
             resp = await client.post(webhook_url, json=payload)
             if resp.status_code != 200:
                 logger.warning(
-                    "slack.delivery_failed",
-                    status_code=resp.status_code,
-                    response_body_len=len(resp.text),
+                    "slack.delivery_failed status=%s body_len=%s",
+                    resp.status_code,
+                    len(resp.text),
                 )
                 return False
             return True
     except Exception as e:
-        logger.warning("slack.delivery_error", error=str(e))
+        logger.warning("slack.delivery_error: %s", e)
         return False

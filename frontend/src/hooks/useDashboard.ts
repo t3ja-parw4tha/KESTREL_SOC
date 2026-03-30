@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchDashboardStats } from '@/api/dashboard'
+import { fetchDashboardStats, type TrendPeriod } from '@/api/dashboard'
 
 const REFETCH_INTERVAL_MS = 30_000
 
-export function useDashboardStats(refetchInterval = REFETCH_INTERVAL_MS) {
+export function useDashboardStats(
+  refetchInterval = REFETCH_INTERVAL_MS,
+  trendPeriod: TrendPeriod = 'day',
+) {
   return useQuery({
-    queryKey: ['dashboard', 'stats'],
-    queryFn: fetchDashboardStats,
+    queryKey: ['dashboard', 'stats', trendPeriod],
+    queryFn: () => fetchDashboardStats(trendPeriod),
     refetchInterval,
   })
 }

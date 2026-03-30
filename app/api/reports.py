@@ -105,7 +105,8 @@ async def get_report_summary(
         for i in range(days - 1, -1, -1)
     ]
     for entry in volume_timeline:
-        entry["count"] = volume_by_day.get(entry["date"], 0)
+        day_key = str(entry["date"])
+        entry["count"] = volume_by_day.get(day_key, 0)
 
     # --- Top 5 MITRE tactics ---
     mitre_r = await db.execute(
@@ -125,7 +126,7 @@ async def get_report_summary(
                 tactic_counts[tac] = tactic_counts.get(tac, 0) + 1
     top_tactics = sorted(
         [{"tactic": k, "count": v} for k, v in tactic_counts.items()],
-        key=lambda x: x["count"],
+        key=lambda x: int(str(x.get("count", 0))),
         reverse=True,
     )[:5]
 

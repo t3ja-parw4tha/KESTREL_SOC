@@ -16,10 +16,10 @@ export function CoverageHeatmap({ tactics, techniques, onTechniqueClick }: Cover
   return (
     <div className="space-y-3">
       {/* Color legend */}
-      <div className="flex items-center justify-end gap-4 text-[10px] text-soc-muted">
+      <div className="flex items-center justify-end gap-4 text-[10px] text-muted-foreground">
         <span className="font-medium uppercase tracking-wide">Alert density:</span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-soc-border" />
+          <span className="h-2.5 w-2.5 rounded-full bg-muted" />
           None
         </span>
         <span className="flex items-center gap-1.5">

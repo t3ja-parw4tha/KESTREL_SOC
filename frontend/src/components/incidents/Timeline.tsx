@@ -16,7 +16,7 @@ const iconMap = {
 
 export function Timeline({ events, className }: TimelineProps) {
   if (!events?.length) {
-    return <p className="text-soc-muted text-sm">No timeline events</p>
+    return <p className="text-muted-foreground text-sm">No timeline events</p>
   }
 
   return (
@@ -26,18 +26,18 @@ export function Timeline({ events, className }: TimelineProps) {
         return (
           <div key={event.id} className="flex gap-4 pb-4 last:pb-0">
             <div className="flex flex-col items-center shrink-0">
-              <div className="w-8 h-8 rounded-full bg-soc-border flex items-center justify-center text-soc-muted">
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
                 <Icon className="w-4 h-4" />
               </div>
               {i < events.length - 1 && (
-                <div className="w-px flex-1 min-h-[24px] bg-soc-border mt-1" />
+                <div className="w-px flex-1 min-h-[24px] bg-muted mt-1" />
               )}
             </div>
             <div className="flex-1 min-w-0 pt-0.5">
-              <p className="text-sm font-medium text-soc-text">{event.title}</p>
-              <p className="text-xs text-soc-muted">{formatDateTime(event.timestamp)}</p>
+              <p className="text-sm font-medium text-foreground">{event.title}</p>
+              <p className="text-xs text-muted-foreground">{formatDateTime(event.timestamp)}</p>
               {event.description && (
-                <p className="text-sm text-soc-muted mt-1">{event.description}</p>
+                <p className="text-sm text-muted-foreground mt-1">{event.description}</p>
               )}
             </div>
           </div>

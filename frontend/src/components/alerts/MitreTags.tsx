@@ -24,7 +24,7 @@ export function MitreTags({ techniques, className }: MitreTagsProps) {
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-soc-border/50 text-soc-muted hover:text-soc-text hover:bg-soc-border transition-colors"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             {formatTechniqueId(id ?? '')}
             <ExternalLink className="w-3 h-3" />
@@ -32,7 +32,7 @@ export function MitreTags({ techniques, className }: MitreTagsProps) {
         ) : (
           <span
             key={id}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-soc-border/50 text-soc-muted"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted/50 text-muted-foreground"
           >
             {formatTechniqueId(id ?? '')}
           </span>

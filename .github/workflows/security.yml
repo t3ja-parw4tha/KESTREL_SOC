@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, dev]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   sast:
     runs-on: ubuntu-latest
@@ -19,14 +23,47 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+          pip install semgrep
       - name: Run Bandit SAST
-        run: bandit -r app/ -ll -f json -o bandit-report.json || true
+        # -ll: report medium+ severity, medium+ confidence. Fail-closed on any findings.
+        run: |
+          bandit -r app/ -ll -f json -o bandit-report.json \
+            && echo "Bandit: no medium+ findings" \
+            || { echo "Bandit findings detected — review bandit-report.json"; exit 1; }
       - name: Run pip-audit (dependency CVEs)
-        run: pip-audit --format json -o audit-report.json || true
+        # Fail on any known CVE in dependencies.
+        run: |
+          pip-audit --format json -o audit-report.json \
+            && echo "pip-audit: no CVEs" \
+            || { echo "pip-audit CVEs found — review audit-report.json"; exit 1; }
       - name: Run safety check
-        run: safety check --json > safety-report.json 2>/dev/null || echo "[]" > safety-report.json
+        # tee preserves exit code via PIPESTATUS; fails closed on any vulnerability.
+        run: |
+          safety check --json | tee safety-report.json
+          test "${PIPESTATUS[0]}" -eq 0 \
+            && echo "Safety: clean" \
+            || { echo "Safety vulnerabilities found — review safety-report.json"; exit 1; }
+      - name: Run Semgrep SAST
+        # --error: exit 1 on any finding. Covers OWASP top 10 + security-audit ruleset.
+        run: |
+          semgrep scan \
+            --config auto \
+            --config p/python \
+            --config p/security-audit \
+            --error \
+            --json \
+            --output semgrep-report.json \
+            app/ \
+            && echo "Semgrep: no findings" \
+            || { echo "Semgrep findings detected — review semgrep-report.json"; exit 1; }
       - name: Upload Security Reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: security-reports
-          path: "*-report.json"
+          path: |
+            bandit-report.json
+            audit-report.json
+            safety-report.json
+            semgrep-report.json
+          if-no-files-found: warn

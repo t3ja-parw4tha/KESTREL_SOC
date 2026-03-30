@@ -4,6 +4,7 @@ export interface Incident {
   max_risk_score: number | null
   highest_severity: string
   alert_ids: string[]
+  status?: string
 }
 
 export interface IncidentListResponse {

@@ -82,22 +82,22 @@ export function SetupWizard() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-soc-bg p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 text-soc-muted hover:text-soc-text text-sm mb-4 transition-colors"
+          className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm mb-4 transition-colors"
         >
           ← Back to home
         </Link>
-        <div className="p-8 rounded-xl border border-soc-border bg-soc-surface shadow-xl">
+        <div className="p-8 rounded-xl border border-border bg-card shadow-xl">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
             <span className="text-white font-bold text-sm">K</span>
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-soc-text">KESTREL</h1>
-            <p className="text-xs text-soc-muted">First-time setup</p>
+            <h1 className="text-lg font-semibold text-foreground">KESTREL</h1>
+            <p className="text-xs text-muted-foreground">First-time setup</p>
           </div>
         </div>
 
@@ -106,7 +106,7 @@ export function SetupWizard() {
             <div
               key={s}
               className={`h-1 flex-1 rounded-full transition-colors ${
-                s <= step ? 'bg-blue-500' : 'bg-soc-border'
+                s <= step ? 'bg-blue-500' : 'bg-muted'
               }`}
             />
           ))}
@@ -115,8 +115,8 @@ export function SetupWizard() {
         {step === 1 && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-base font-medium text-soc-text">Create Admin Account</h2>
-              <p className="text-xs text-soc-muted mt-0.5">
+              <h2 className="text-base font-medium text-foreground">Create Admin Account</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 This account will have full access to KESTREL
               </p>
             </div>
@@ -129,27 +129,27 @@ export function SetupWizard() {
               placeholder="Username"
               value={form.username}
               onChange={(e) => setForm({ ...form, username: e.target.value })}
-              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+              className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm"
             />
             <input
               type="password"
               placeholder="Password (min 12 characters)"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+              className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm"
             />
             <input
               type="password"
               placeholder="Confirm password"
               value={form.confirmPassword}
               onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
-              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+              className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm"
             />
             <button
               type="button"
               onClick={createAdmin}
               disabled={loading}
-              className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
             >
               {loading ? 'Creating...' : 'Create Account →'}
             </button>
@@ -159,15 +159,15 @@ export function SetupWizard() {
         {step === 2 && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-base font-medium text-soc-text">Configure AI Provider</h2>
-              <p className="text-xs text-soc-muted mt-0.5">
+              <h2 className="text-base font-medium text-foreground">Configure AI Provider</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Powers alert triage and summarization. Skip to configure later.
               </p>
             </div>
             <select
               value={form.aiProvider}
               onChange={(e) => setForm({ ...form, aiProvider: e.target.value })}
-              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+              className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm"
             >
               <option value="openai">OpenAI (GPT-4o-mini)</option>
               <option value="anthropic">Anthropic (Claude)</option>
@@ -177,20 +177,20 @@ export function SetupWizard() {
               placeholder={form.aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
               value={form.aiKey}
               onChange={(e) => setForm({ ...form, aiKey: e.target.value })}
-              className="w-full px-3 py-2 rounded border border-soc-border bg-soc-bg text-soc-text text-sm"
+              className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm"
             />
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setStep(3)}
-                className="flex-1 py-2 rounded border border-soc-border text-soc-muted text-sm hover:text-soc-text"
+                className="flex-1 py-2 rounded border border-border text-muted-foreground text-sm hover:text-foreground"
               >
                 Skip for now
               </button>
               <button
                 type="button"
                 onClick={saveAI}
-                className="flex-1 py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                className="flex-1 py-2 rounded-lg gradient-primary text-white text-sm font-medium hover:opacity-90"
               >
                 Save &amp; Continue →
               </button>
@@ -204,15 +204,15 @@ export function SetupWizard() {
               <CheckCircle2 className="w-6 h-6 text-green-400" />
             </div>
             <div>
-              <h2 className="text-base font-medium text-soc-text">KESTREL is ready</h2>
-              <p className="text-xs text-soc-muted mt-0.5">
+              <h2 className="text-base font-medium text-foreground">KESTREL is ready</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Configure source integrations in Settings anytime
               </p>
             </div>
             <button
               type="button"
               onClick={() => navigate('/login')}
-              className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+              className="w-full py-2 rounded-lg gradient-primary text-white text-sm font-medium hover:opacity-90"
             >
               Go to Login →
             </button>

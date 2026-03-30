@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import alerts, audit, auth, dashboard, decisions, health, ai, incidents, ingest, mitre, pages, reports, security_dashboard, sources, sso, playbooks, settings as settings_router
+from app.api import alerts, audit, auth, dashboard, decisions, health, ai, ai_assistant, incidents, ingest, mitre, pages, reports, security_dashboard, sources, sso, playbooks, settings as settings_router, suppression, assets, evidence, watchlist, detection_rules, compliance, threat_attribution, custom_dashboards, scheduled_reports, cases, hunting, resilience
 from app.api.health import set_start_time
 from app.config import get_settings
 from app.database import Base, engine
@@ -24,6 +24,9 @@ from app.observability.tracing import setup_tracing
 from app.security.auth import ensure_jwt_keys
 from app.security.exceptions import SecurityError
 from app.security.middleware import setup_security
+from app.services.scheduled_reports import scheduled_reports_worker
+from app.services.job_queue import job_queue_worker
+from app.services.source_health import source_health_monitor_worker
 from starlette.middleware.sessions import SessionMiddleware
 
 _cleanup_logger = logging.getLogger("app.cleanup")
@@ -82,10 +85,28 @@ def create_app() -> FastAPI:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         cleanup_task = asyncio.create_task(_cleanup_stale_records())
+        scheduled_reports_task = asyncio.create_task(scheduled_reports_worker())
+        job_queue_task = asyncio.create_task(job_queue_worker())
+        source_health_task = asyncio.create_task(source_health_monitor_worker())
         yield
         cleanup_task.cancel()
+        scheduled_reports_task.cancel()
+        job_queue_task.cancel()
+        source_health_task.cancel()
         try:
             await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await scheduled_reports_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await job_queue_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await source_health_task
         except asyncio.CancelledError:
             pass
         await engine.dispose()
@@ -166,9 +187,22 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(ingest.router, prefix="/api/v1")
     app.include_router(decisions.router, prefix="/api/v1")
+    app.include_router(assets.router, prefix="/api/v1")
     app.include_router(sso.router, prefix="/api/v1")
     app.include_router(playbooks.router, prefix="/api/v1")
+    app.include_router(watchlist.router, prefix="/api/v1")
+    app.include_router(detection_rules.router, prefix="/api/v1")
+    app.include_router(compliance.router, prefix="/api/v1")
+    app.include_router(threat_attribution.router, prefix="/api/v1")
+    app.include_router(custom_dashboards.router, prefix="/api/v1")
+    app.include_router(scheduled_reports.router, prefix="/api/v1")
+    app.include_router(cases.router, prefix="/api/v1")
+    app.include_router(hunting.router, prefix="/api/v1")
+    app.include_router(resilience.router, prefix="/api/v1")
+    app.include_router(suppression.router, prefix="/api/v1")
     app.include_router(ai.router, prefix="/api/v1")
+    app.include_router(ai_assistant.router, prefix="/api/v1")
+    app.include_router(evidence.router, prefix="/api/v1")
     app.include_router(incidents.router, prefix="/api/v1")
     app.include_router(mitre.router, prefix="/api/v1")
     app.include_router(sources.router, prefix="/api/v1")

@@ -24,7 +24,7 @@ function toAlertsResponse(data: BackendAlertsResponse): AlertsResponse {
 }
 
 export async function getAlerts(params?: AlertFiltersParams): Promise<AlertsResponse> {
-  const backendParams: Record<string, string | number | undefined> = {
+  const backendParams: Record<string, string | number | boolean | undefined> = {
     page: params?.page ?? 1,
     limit: params?.limit ?? 50,
     severity: params?.severity,
@@ -35,6 +35,9 @@ export async function getAlerts(params?: AlertFiltersParams): Promise<AlertsResp
     assigned_to: params?.assigned_to,
     date_from: params?.date_from,
     date_to: params?.date_to,
+    sort_by: params?.sort_by,
+    sort_dir: params?.sort_dir,
+    false_positive_candidate: params?.false_positive_candidate,
   }
   const filtered = Object.fromEntries(
     Object.entries(backendParams).filter(([, v]) => v !== undefined && v !== '')
@@ -45,6 +48,13 @@ export async function getAlerts(params?: AlertFiltersParams): Promise<AlertsResp
 
 export async function getAlert(id: string): Promise<Alert> {
   return get<Alert>(`/alerts/${id}`)
+}
+
+export async function patchAlert(
+  id: string,
+  data: { status?: string; assigned_to?: string | null }
+): Promise<Alert> {
+  return patch<Alert>(`/alerts/${id}`, data)
 }
 
 export async function updateAlertStatus(

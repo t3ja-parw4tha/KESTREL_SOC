@@ -1,5 +1,6 @@
 """Authentication and session API routes."""
 
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import ApiKey, Session, User
+from app.models import ApiKey, AuditLog, Session, User
 from app.schemas.auth import (
     ApiKeyCreateRequest,
     ApiKeyResponse,
@@ -46,6 +47,31 @@ from app.security.csrf import get_csrf_token, verify_csrf
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 days
+
+
+def _identity_actor(user: dict | None) -> str | None:
+    if not user:
+        return None
+    return str(user.get("username") or user.get("sub") or "") or None
+
+
+def _add_identity_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    actor: str | None,
+    target: str | None,
+    details: dict,
+) -> None:
+    db.add(
+        AuditLog(
+            id=str(uuid.uuid4()),
+            action=action,
+            alert_id=target,
+            analyst=actor,
+            details=details,
+        )
+    )
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -87,8 +113,16 @@ async def login(
     stmt = select(User).where(User.username == body.username, User.is_active.is_(True))
     r = await db.execute(stmt)
     user = r.scalar_one_or_none()
+    client_ip = request.client.host if request.client else None
     if not user or not verify_password(body.password, user.password_hash):
-        await record_failed_login(db, body.username, request.client.host if request.client else None)
+        await record_failed_login(db, body.username, client_ip)
+        _add_identity_audit(
+            db,
+            action="auth.login_failure",
+            actor=body.username,
+            target=None,
+            details={"username": body.username, "ip_address": client_ip, "reason": "invalid_credentials"},
+        )
         raise HTTPException(status_code=401, detail="Invalid username or password")
     await clear_failed_logins(db, user.username)
     access_token, _ = create_access_token(user.id, user.role)
@@ -97,8 +131,15 @@ async def login(
         db,
         user.id,
         refresh_jti,
-        request.client.host if request.client else None,
+        client_ip,
         request.headers.get("user-agent"),
+    )
+    _add_identity_audit(
+        db,
+        action="auth.login_success",
+        actor=str(user.id),
+        target=str(user.id),
+        details={"username": user.username, "role": user.role, "ip_address": client_ip},
     )
     from app.config import get_settings
     settings = get_settings()
@@ -173,6 +214,14 @@ async def create_user(
         updated_at=datetime.now(timezone.utc),
     )
     db.add(user)
+    await db.flush()
+    _add_identity_audit(
+        db,
+        action="identity.user_create",
+        actor=_identity_actor(_admin),
+        target=str(user.id),
+        details={"username": user.username, "role": user.role, "is_active": user.is_active},
+    )
     await db.commit()
     return {"username": user.username, "role": user.role, "created": True}
 
@@ -239,11 +288,26 @@ async def update_user(
     u = r.scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
+    old_role = u.role
+    old_active = bool(u.is_active)
     if body.role is not None:
         u.role = body.role
     if body.is_active is not None:
         u.is_active = body.is_active
     u.updated_at = datetime.now(timezone.utc)
+    _add_identity_audit(
+        db,
+        action="identity.user_update",
+        actor=_identity_actor(_admin),
+        target=str(u.id),
+        details={
+            "username": u.username,
+            "old_role": old_role,
+            "new_role": u.role,
+            "old_is_active": old_active,
+            "new_is_active": bool(u.is_active),
+        },
+    )
     await db.commit()
     return {"updated": True}
 
@@ -276,12 +340,20 @@ async def refresh(
     # New tokens
     access_token, _ = create_access_token(user_id, role)
     refresh_token, refresh_jti = create_refresh_token(user_id, role)
+    client_ip = request.client.host if request.client else None
     await create_session(
         db,
         user_id,
         refresh_jti,
-        request.client.host if request.client else None,
+        client_ip,
         request.headers.get("user-agent"),
+    )
+    _add_identity_audit(
+        db,
+        action="auth.token_refresh",
+        actor=str(user_id),
+        target=str(user_id),
+        details={"user_id": user_id, "role": role, "ip_address": client_ip},
     )
     from app.config import get_settings
     settings = get_settings()
@@ -319,6 +391,13 @@ async def logout(
         except SecurityError:
             pass
     _clear_refresh_cookie(response)
+    _add_identity_audit(
+        db,
+        action="auth.logout",
+        actor=_identity_actor(user),
+        target=str(user.get("sub")) if user.get("sub") else None,
+        details={"username": user.get("username") or user.get("sub")},
+    )
     return {"status": "ok"}
 
 
@@ -338,6 +417,14 @@ async def change_password(
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     validate_password_policy(body.new_password, u.username)
     u.password_hash = hash_password(body.new_password)
+    _add_identity_audit(
+        db,
+        action="identity.password_change",
+        actor=_identity_actor(user),
+        target=str(u.id),
+        details={"username": u.username},
+    )
+    await db.commit()
     return {"status": "ok"}
 
 
@@ -378,8 +465,15 @@ async def revoke_session(
     # Blocklist refresh token so it cannot be used again (exp far future)
     block_exp = datetime.now(timezone.utc) + timedelta(days=8)
     await blocklist_add(db, session.refresh_jti, block_exp)
+    _add_identity_audit(
+        db,
+        action="identity.session_revoke",
+        actor=_identity_actor(user),
+        target=str(session_id),
+        details={"user_id": user_id},
+    )
     await db.delete(session)
-    await db.flush()
+    await db.commit()
     return {"status": "ok"}
 
 
@@ -406,6 +500,14 @@ async def create_api_key(
     )
     db.add(api_key)
     await db.flush()
+    _add_identity_audit(
+        db,
+        action="identity.api_key_create",
+        actor=_identity_actor(user),
+        target=str(api_key.id),
+        details={"name": body.name, "permissions": body.permissions},
+    )
+    await db.commit()
     return ApiKeyResponse(
         id=api_key.id,
         name=api_key.name,
@@ -413,3 +515,54 @@ async def create_api_key(
         permissions=body.permissions,
         created_at=api_key.created_at.isoformat() if api_key.created_at else "",
     )
+
+
+@router.get("/users/{user_id}/activity")
+async def get_user_activity(
+    user_id: str,
+    _admin: Annotated[dict, Depends(require_permission("users:manage"))],
+    db: AsyncSession = Depends(get_db),
+):
+    """Return last 50 audit events where the actor or target matches the user (admin only)."""
+    try:
+        parsed_user_id = int(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid user id") from exc
+
+    # Look up user to get username for matching
+    target_user = (
+        await db.execute(select(User).where(User.id == parsed_user_id))
+    ).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    username = target_user.username
+    subject_actor = str(parsed_user_id)
+
+    rows = (
+        await db.execute(
+            select(AuditLog)
+            .where(AuditLog.analyst.in_([username, subject_actor]))
+            .order_by(AuditLog.timestamp.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+
+    return {
+        "user_id": str(parsed_user_id),
+        "username": username,
+        "total": len(rows),
+        "events": [
+            {
+                "id": r.id,
+                "action": r.action,
+                "target": r.alert_id,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                "ip_address": r.ip_address,
+                "details": r.details,
+                "method": r.method,
+                "path": r.path,
+            }
+            for r in rows
+        ],
+    }

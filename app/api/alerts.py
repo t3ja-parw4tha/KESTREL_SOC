@@ -41,6 +41,8 @@ class AlertListItem(BaseModel):
     category: str
     risk_score: int | None
     risk_level: str | None
+    false_positive_score: int | None
+    false_positive_candidate: bool
     created_at: str | None
 
 
@@ -71,6 +73,8 @@ class AlertDetailResponse(BaseModel):
     risk_score: int | None
     risk_level: str | None
     confidence: float | None
+    false_positive_score: int | None
+    false_positive_candidate: bool
     incident_group_id: str | None
     correlated_alert_ids: list | None
     ai_summary: str | None
@@ -152,6 +156,10 @@ async def list_alerts(
     category: str | None = Query(None),
     search: str | None = Query(None),
     assigned_to: str | None = Query(None),
+    source_ip: str | None = Query(None, description="Filter by source IP address"),
+    false_positive_candidate: bool | None = Query(None, description="Filter only high-confidence FP candidates"),
+    user_id: str | None = Query(None, description="Filter by user/principal ID"),
+    asset_id: str | None = Query(None, description="Filter by asset ID"),
     date_from: str | None = Query(None, description="ISO 8601 date/datetime lower bound for created_at"),
     date_to: str | None = Query(None, description="ISO 8601 date/datetime upper bound for created_at"),
     page: int = Query(1, ge=1),
@@ -187,6 +195,15 @@ async def list_alerts(
     if assigned_to:
         q = q.where(Alert.assigned_to == assigned_to)
         count_q = count_q.where(Alert.assigned_to == assigned_to)
+    if source_ip:
+        q = q.where(Alert.source_ip == source_ip)
+        count_q = count_q.where(Alert.source_ip == source_ip)
+    if user_id:
+        q = q.where(Alert.user_id == user_id)
+        count_q = count_q.where(Alert.user_id == user_id)
+    if asset_id:
+        q = q.where(Alert.asset_id == asset_id)
+        count_q = count_q.where(Alert.asset_id == asset_id)
     if date_from:
         try:
             dt_from = datetime.fromisoformat(date_from)
@@ -219,10 +236,22 @@ async def list_alerts(
             category=r.category,
             risk_score=r.risk_score,
             risk_level=r.risk_level,
+            false_positive_score=(
+                int((r.enrichment or {}).get("fp_classifier", {}).get("score"))
+                if isinstance((r.enrichment or {}).get("fp_classifier", {}), dict)
+                and (r.enrichment or {}).get("fp_classifier", {}).get("score") is not None
+                else None
+            ),
+            false_positive_candidate=bool(
+                (r.enrichment or {}).get("fp_classifier", {}).get("candidate", False)
+            ),
             created_at=r.created_at.isoformat() if r.created_at else None,
         )
         for r in rows
     ]
+    if false_positive_candidate is not None:
+        items = [i for i in items if i.false_positive_candidate is false_positive_candidate]
+        total = len(items)
     return AlertListResponse(items=items, total=total, page=page, limit=limit)
 
 
@@ -275,6 +304,15 @@ async def get_alert(
         risk_score=alert.risk_score,
         risk_level=alert.risk_level,
         confidence=alert.confidence,
+        false_positive_score=(
+            int((alert.enrichment or {}).get("fp_classifier", {}).get("score"))
+            if isinstance((alert.enrichment or {}).get("fp_classifier", {}), dict)
+            and (alert.enrichment or {}).get("fp_classifier", {}).get("score") is not None
+            else None
+        ),
+        false_positive_candidate=bool(
+            (alert.enrichment or {}).get("fp_classifier", {}).get("candidate", False)
+        ),
         incident_group_id=alert.incident_group_id,
         correlated_alert_ids=corr_ids,
         ai_summary=alert.ai_summary,
@@ -591,3 +629,76 @@ async def get_alert_timeline(
         )
     items.sort(key=lambda x: x.timestamp)
     return TimelineResponse(items=items)
+
+
+@router.get("/queue/stats")
+async def get_queue_stats(
+    _user: Annotated[dict, Depends(require_permission("alerts:read"))],
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyst workload and queue depth statistics for the ops panel."""
+    from datetime import timedelta, timezone
+    now = datetime.now(timezone.utc)
+    stale_threshold = now - timedelta(hours=24)
+
+    # Open alert counts per analyst
+    workload_r = await db.execute(
+        select(Alert.assigned_to, func.count(Alert.id).label("count"))
+        .where(Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS]))
+        .group_by(Alert.assigned_to)
+    )
+    workload = [
+        {"analyst": row.assigned_to or "unassigned", "count": row.count}
+        for row in workload_r.all()
+    ]
+
+    # Unassigned open alert count
+    unassigned_r = await db.execute(
+        select(func.count(Alert.id)).where(
+            Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS]),
+            Alert.assigned_to.is_(None),
+        )
+    )
+    unassigned_count = unassigned_r.scalar() or 0
+
+    # Stale assignments: assigned but not updated in >24h
+    stale_r = await db.execute(
+        select(Alert.assigned_to, func.count(Alert.id).label("stale_count"))
+        .where(
+            Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS]),
+            Alert.assigned_to.is_not(None),
+            Alert.updated_at < stale_threshold,
+        )
+        .group_by(Alert.assigned_to)
+    )
+    stale = [
+        {"analyst": row.assigned_to, "stale_count": row.stale_count}
+        for row in stale_r.all()
+    ]
+
+    # Total open + in-progress
+    total_open_r = await db.execute(
+        select(func.count(Alert.id)).where(
+            Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS])
+        )
+    )
+    total_open = total_open_r.scalar() or 0
+
+    # Severity breakdown of open queue
+    sev_r = await db.execute(
+        select(Alert.severity, func.count(Alert.id))
+        .where(Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS]))
+        .group_by(Alert.severity)
+    )
+    queue_by_severity = {
+        (s.value if hasattr(s, "value") else str(s)): c
+        for s, c in sev_r.all()
+    }
+
+    return {
+        "total_open": total_open,
+        "unassigned_count": unassigned_count,
+        "workload": workload,
+        "stale_assignments": stale,
+        "queue_by_severity": queue_by_severity,
+    }

@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Breadcrumb } from '@/components/ui/Breadcrumb'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  LineChart, Line,
+  AreaChart, Area, Cell,
 } from 'recharts'
 import {
   Printer, TrendingUp, TrendingDown, Minus, Target, Users,
   Shield, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronRight, Lock,
+  FileCheck, Calendar, Play, Trash2,
 } from 'lucide-react'
+import { get, post, del } from '@/api/client'
 import { getReportSummary, getAnalystActivity, type ReportSummary, type AnalystActivity } from '@/api/reports'
 import { useAuth } from '@/security/AuthContext'
 import type { User } from '@/security/AuthContext'
@@ -20,18 +22,21 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { cn } from '@/utils/cn'
 
 type DayRange = 7 | 30 | 90
-type Tab = 'summary' | 'coverage' | 'analysts'
+type Tab = 'summary' | 'coverage' | 'analysts' | 'compliance' | 'scheduled'
 
-const CHART_STYLE = {
-  backgroundColor: 'var(--soc-tooltip-bg)',
-  border: '1px solid var(--soc-tooltip-border)',
+const CHART_TOOLTIP_STYLE = {
+  backgroundColor: 'hsl(var(--card))',
+  border: '1px solid hsl(var(--border))',
   borderRadius: '8px',
-  color: 'var(--soc-tooltip-text)',
+  color: 'hsl(var(--foreground))',
   fontSize: '12px',
 }
 
 const SEVERITY_COLORS: Record<string, string> = {
-  Critical: '#ef4444', High: '#f97316', Medium: '#eab308', Low: '#3b82f6',
+  Critical: 'hsl(var(--severity-critical))',
+  High:     'hsl(var(--severity-high))',
+  Medium:   'hsl(var(--severity-medium))',
+  Low:      'hsl(var(--severity-low))',
 }
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
@@ -42,26 +47,27 @@ function KpiCard({
   trend?: number | null; danger?: boolean; icon?: React.ElementType
 }) {
   return (
-    <div className={cn('rounded-lg border bg-soc-surface p-4', danger ? 'border-red-500/30 bg-red-500/5' : 'border-soc-border')}>
+    <div className={cn(
+      'glass-card p-4 rounded-xl border transition-all duration-200',
+      danger
+        ? 'border-red-500/30 bg-red-500/5'
+        : 'border-border/50 hover:border-border'
+    )}>
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs text-soc-muted">{label}</p>
-        {Icon && <Icon className="w-4 h-4 text-soc-muted/60" />}
+        <p className="text-xs text-muted-foreground">{label}</p>
+        {Icon && <Icon className={cn('w-4 h-4', danger ? 'text-red-400' : 'text-muted-foreground/60')} />}
       </div>
-      <p className={cn('text-2xl font-bold', danger ? 'text-red-400' : 'text-soc-text')}>{value}</p>
-      {sub && <p className="text-xs text-soc-muted mt-0.5">{sub}</p>}
+      <p className={cn('text-2xl font-bold', danger ? 'text-red-400' : 'text-foreground')}>{value}</p>
+      {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
       {trend != null && (
         <p className={cn('text-xs mt-1.5 flex items-center gap-1',
-          trend > 0 ? 'text-red-400' : trend < 0 ? 'text-emerald-400' : 'text-soc-muted')}>
+          trend > 0 ? 'text-red-400' : trend < 0 ? 'text-emerald-400' : 'text-muted-foreground')}>
           {trend > 0 ? <TrendingUp className="w-3 h-3" /> : trend < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
           {Math.abs(Math.round(trend))}% vs prev period
         </p>
       )}
     </div>
   )
-}
-
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-sm font-semibold text-soc-text mb-3">{children}</h2>
 }
 
 // ── Summary tab ───────────────────────────────────────────────────────────────
@@ -77,35 +83,44 @@ function SummaryTab({ data, days }: { data: ReportSummary; days: number }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
-          <SectionHeading>Alert Volume ({days} days)</SectionHeading>
+        {/* Alert Volume — AreaChart with gradient */}
+        <div className="glass-card rounded-xl border border-border/50 p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Alert Volume ({days} days)</h3>
           <div className="h-[220px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--soc-chart-grid)" />
-                <XAxis dataKey="label" stroke="var(--soc-muted)" fontSize={10} tick={{ fill: 'var(--soc-muted)' }} interval={xInterval} />
-                <YAxis stroke="var(--soc-muted)" fontSize={10} tick={{ fill: 'var(--soc-muted)' }} allowDecimals={false} width={28} />
-                <Tooltip contentStyle={CHART_STYLE} formatter={(v: number) => [v, 'Alerts']} />
-                <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-              </LineChart>
+              <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border)/0.5)" />
+                <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} interval={xInterval} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} allowDecimals={false} width={28} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [v, 'Alerts']} />
+                <Area type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} fill="url(#volumeGradient)" dot={false} activeDot={{ r: 4 }} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
-        <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
-          <SectionHeading>Alerts by Severity</SectionHeading>
+
+        {/* Alerts by Severity — horizontal bar */}
+        <div className="glass-card rounded-xl border border-border/50 p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Alerts by Severity</h3>
           {severityData.length === 0 ? (
-            <div className="h-[220px] flex items-center justify-center text-soc-muted text-sm">No data</div>
+            <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">No data</div>
           ) : (
             <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={severityData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--soc-chart-grid)" />
-                  <XAxis dataKey="name" fontSize={11} tick={{ fill: 'var(--soc-muted)' }} />
-                  <YAxis fontSize={11} tick={{ fill: 'var(--soc-muted)' }} allowDecimals={false} width={28} />
-                  <Tooltip contentStyle={CHART_STYLE} />
-                  <Bar dataKey="value" name="Alerts" radius={[4, 4, 0, 0]}>
+                <BarChart data={severityData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border)/0.5)" horizontal={false} />
+                  <XAxis type="number" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} allowDecimals={false} />
+                  <YAxis dataKey="name" type="category" fontSize={11} tick={{ fill: 'hsl(var(--muted-foreground))' }} width={56} />
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="value" name="Alerts" radius={[0, 4, 4, 0]}>
                     {severityData.map((entry) => (
-                      <rect key={entry.name} fill={SEVERITY_COLORS[entry.name] ?? '#6b7280'} />
+                      <Cell key={entry.name} fill={SEVERITY_COLORS[entry.name] ?? '#6b7280'} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -114,39 +129,47 @@ function SummaryTab({ data, days }: { data: ReportSummary; days: number }) {
           )}
         </div>
       </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
-          <SectionHeading>Top Alert Sources</SectionHeading>
-          {data.top_sources.length === 0 ? <p className="text-soc-muted text-sm py-4">No data</p> : (
-            <div className="space-y-2">
+        {/* Top Sources */}
+        <div className="glass-card rounded-xl border border-border/50 p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Top Alert Sources</h3>
+          {data.top_sources.length === 0 ? (
+            <p className="text-muted-foreground text-sm py-4">No data</p>
+          ) : (
+            <div className="space-y-3">
               {data.top_sources.map(({ source, count }) => {
                 const max = Math.max(...data.top_sources.map((s) => s.count), 1)
                 return (
                   <div key={source} className="flex items-center gap-3">
-                    <span className="text-sm text-soc-muted w-28 truncate" title={source}>{source}</span>
-                    <div className="flex-1 h-2 rounded-full bg-soc-border overflow-hidden">
-                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.round((count / max) * 100)}%` }} />
+                    <span className="text-sm text-muted-foreground w-28 truncate" title={source}>{source}</span>
+                    <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.round((count / max) * 100)}%` }} />
                     </div>
-                    <span className="text-sm font-medium text-soc-text w-8 text-right">{count}</span>
+                    <span className="text-sm font-medium text-foreground w-8 text-right">{count}</span>
                   </div>
                 )
               })}
             </div>
           )}
         </div>
-        <div className="rounded-lg border border-soc-border bg-soc-surface p-4">
-          <SectionHeading>Top MITRE Tactics Triggered</SectionHeading>
-          {data.top_tactics.length === 0 ? <p className="text-soc-muted text-sm py-4">No MITRE mappings</p> : (
-            <div className="space-y-2">
+
+        {/* Top MITRE Tactics */}
+        <div className="glass-card rounded-xl border border-border/50 p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Top MITRE Tactics Triggered</h3>
+          {data.top_tactics.length === 0 ? (
+            <p className="text-muted-foreground text-sm py-4">No MITRE mappings</p>
+          ) : (
+            <div className="space-y-3">
               {data.top_tactics.map(({ tactic, count }) => {
                 const max = Math.max(...data.top_tactics.map((t) => t.count), 1)
                 return (
                   <div key={tactic} className="flex items-center gap-3">
-                    <span className="text-sm text-soc-muted flex-1 truncate" title={tactic}>{tactic}</span>
-                    <div className="w-32 h-2 rounded-full bg-soc-border overflow-hidden">
-                      <div className="h-full rounded-full bg-orange-500" style={{ width: `${Math.round((count / max) * 100)}%` }} />
+                    <span className="text-sm text-muted-foreground flex-1 truncate" title={tactic}>{tactic}</span>
+                    <div className="w-32 h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full rounded-full bg-orange-500 transition-all duration-500" style={{ width: `${Math.round((count / max) * 100)}%` }} />
                     </div>
-                    <span className="text-sm font-medium text-soc-text w-8 text-right">{count}</span>
+                    <span className="text-sm font-medium text-foreground w-8 text-right">{count}</span>
                   </div>
                 )
               })}
@@ -175,43 +198,46 @@ function CoverageTab({ data }: { data: MitreCoverageResponse }) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-soc-border bg-soc-surface p-6 flex flex-wrap items-center gap-8">
+      <div className="glass-card rounded-xl border border-border/50 p-6 flex flex-wrap items-center gap-8">
         <div className="text-center">
-          <p className="text-4xl font-bold text-soc-text">{coveragePct}%</p>
-          <p className="text-xs text-soc-muted mt-1">Overall Coverage</p>
+          <p className="text-4xl font-bold text-foreground">{coveragePct}%</p>
+          <p className="text-xs text-muted-foreground mt-1">Overall Coverage</p>
         </div>
         <div className="flex-1 min-w-[200px]">
-          <div className="h-3 rounded-full bg-soc-border overflow-hidden">
-            <div className={cn('h-full rounded-full transition-all', coveragePct >= 50 ? 'bg-emerald-500' : coveragePct >= 20 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${coveragePct}%` }} />
+          <div className="h-3 rounded-full bg-muted overflow-hidden">
+            <div className={cn('h-full rounded-full transition-all duration-700', coveragePct >= 50 ? 'bg-emerald-500' : coveragePct >= 20 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${coveragePct}%` }} />
           </div>
-          <div className="flex justify-between mt-1.5 text-xs text-soc-muted">
+          <div className="flex justify-between mt-1.5 text-xs text-muted-foreground">
             <span>{summary.techniques_detected ?? 0} techniques detected</span>
             <span>{summary.total_techniques ?? 0} total</span>
           </div>
         </div>
-        <div className="text-center"><p className="text-2xl font-bold text-soc-text">{summary.tactics_covered ?? 0}</p><p className="text-xs text-soc-muted mt-1">Tactics covered</p></div>
-        <div className="text-center"><p className="text-2xl font-bold text-red-400">{gaps.length}</p><p className="text-xs text-soc-muted mt-1">Detection gaps</p></div>
+        <div className="text-center"><p className="text-2xl font-bold text-foreground">{summary.tactics_covered ?? 0}</p><p className="text-xs text-muted-foreground mt-1">Tactics covered</p></div>
+        <div className="text-center"><p className="text-2xl font-bold text-red-400">{gaps.length}</p><p className="text-xs text-muted-foreground mt-1">Detection gaps</p></div>
       </div>
-      <div className="rounded-lg border border-soc-border bg-soc-surface overflow-hidden">
+
+      <div className="glass-card rounded-xl border border-border/50 overflow-hidden">
         <table className="w-full text-sm">
-          <thead><tr className="border-b border-soc-border">
-            <th className="text-left px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Tactic</th>
-            <th className="text-right px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Detected</th>
-            <th className="text-right px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Total</th>
-            <th className="px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Coverage</th>
-          </tr></thead>
-          <tbody className="divide-y divide-soc-border">
+          <thead>
+            <tr className="border-b border-border/50 bg-muted/30">
+              <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Tactic</th>
+              <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Detected</th>
+              <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Total</th>
+              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Coverage</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
             {tacticStats.map((t) => (
-              <tr key={t.id} className="hover:bg-soc-border/20">
-                <td className="px-4 py-2.5 font-medium text-soc-text">{t.name}</td>
-                <td className="px-4 py-2.5 text-right text-soc-text">{t.detected}</td>
-                <td className="px-4 py-2.5 text-right text-soc-muted">{t.total}</td>
+              <tr key={t.id} className="hover:bg-muted/20 transition-colors">
+                <td className="px-4 py-2.5 font-medium text-foreground">{t.name}</td>
+                <td className="px-4 py-2.5 text-right text-foreground">{t.detected}</td>
+                <td className="px-4 py-2.5 text-right text-muted-foreground">{t.total}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 rounded-full bg-soc-border overflow-hidden">
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                       <div className={cn('h-full rounded-full', t.pct >= 50 ? 'bg-emerald-500' : t.pct >= 20 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${t.pct}%` }} />
                     </div>
-                    <span className="text-xs text-soc-muted w-8 text-right">{t.pct}%</span>
+                    <span className="text-xs text-muted-foreground w-8 text-right">{t.pct}%</span>
                   </div>
                 </td>
               </tr>
@@ -219,16 +245,17 @@ function CoverageTab({ data }: { data: MitreCoverageResponse }) {
           </tbody>
         </table>
       </div>
+
       {gaps.length > 0 && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5">
-          <button type="button" onClick={() => setGapsOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-400">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 overflow-hidden">
+          <button type="button" onClick={() => setGapsOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors">
             <span className="flex items-center gap-2"><XCircle className="w-4 h-4" />{gaps.length} techniques with no detection</span>
             {gapsOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
           {gapsOpen && (
             <div className="border-t border-red-500/20 px-4 pb-4 pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {gaps.map((t) => (
-                <div key={t.id} className="flex items-start gap-2 text-xs text-soc-muted">
+                <div key={t.id} className="flex items-start gap-2 text-xs text-muted-foreground">
                   <span className="shrink-0 font-mono text-red-400">{t.id}</span>
                   <span className="truncate" title={t.name}>{t.name}</span>
                 </div>
@@ -245,39 +272,295 @@ function CoverageTab({ data }: { data: MitreCoverageResponse }) {
 function AnalystTab({ analysts, days }: { analysts: Array<{ analyst: string; alerts_triaged: number; comments_added: number }>; days: number }) {
   if (analysts.length === 0) {
     return (
-      <div className="rounded-lg border border-soc-border bg-soc-surface p-8 text-center">
-        <Users className="w-10 h-10 text-soc-muted mx-auto mb-2" />
-        <p className="text-soc-muted text-sm">No analyst activity in the last {days} days.</p>
+      <div className="glass-card rounded-xl border border-border/50 p-8 text-center">
+        <Users className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+        <p className="text-muted-foreground text-sm">No analyst activity in the last {days} days.</p>
       </div>
     )
   }
   const maxTriaged = Math.max(...analysts.map((a) => a.alerts_triaged), 1)
   return (
-    <div className="rounded-lg border border-soc-border bg-soc-surface overflow-hidden">
+    <div className="glass-card rounded-xl border border-border/50 overflow-hidden">
       <table className="w-full text-sm">
-        <thead><tr className="border-b border-soc-border">
-          <th className="text-left px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Analyst ID</th>
-          <th className="text-right px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Triaged</th>
-          <th className="text-right px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Comments</th>
-          <th className="text-right px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Total</th>
-          <th className="px-4 py-2.5 text-xs font-medium text-soc-muted uppercase tracking-wide">Activity</th>
-        </tr></thead>
-        <tbody className="divide-y divide-soc-border">
+        <thead>
+          <tr className="border-b border-border/50 bg-muted/30">
+            <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Analyst ID</th>
+            <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Triaged</th>
+            <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Comments</th>
+            <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Total</th>
+            <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Activity</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
           {analysts.map((a) => (
-            <tr key={a.analyst} className="hover:bg-soc-border/20">
-              <td className="px-4 py-2.5 font-mono text-soc-text text-xs">{a.analyst}</td>
-              <td className="px-4 py-2.5 text-right font-medium text-soc-text">{a.alerts_triaged}</td>
-              <td className="px-4 py-2.5 text-right text-soc-muted">{a.comments_added}</td>
-              <td className="px-4 py-2.5 text-right text-soc-text">{a.alerts_triaged + a.comments_added}</td>
+            <tr key={a.analyst} className="hover:bg-muted/20 transition-colors">
+              <td className="px-4 py-2.5 font-mono text-foreground text-xs">{a.analyst}</td>
+              <td className="px-4 py-2.5 text-right font-medium text-foreground">{a.alerts_triaged}</td>
+              <td className="px-4 py-2.5 text-right text-muted-foreground">{a.comments_added}</td>
+              <td className="px-4 py-2.5 text-right text-foreground">{a.alerts_triaged + a.comments_added}</td>
               <td className="px-4 py-2.5">
-                <div className="h-1.5 rounded-full bg-soc-border overflow-hidden">
-                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.round((a.alerts_triaged / maxTriaged) * 100)}%` }} />
+                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.round((a.alerts_triaged / maxTriaged) * 100)}%` }} />
                 </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ── Compliance tab ────────────────────────────────────────────────────────────
+const FRAMEWORKS = ['soc2', 'iso27001', 'pci-dss'] as const
+type Framework = typeof FRAMEWORKS[number]
+
+function ComplianceTab({ days }: { days: number }) {
+  const [framework, setFramework] = useState<Framework>('soc2')
+  const [report, setReport] = useState<Record<string, unknown> | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    try {
+      const data = await get<Record<string, unknown>>(`/compliance/reports/generate?framework=${framework}&days=${days}`)
+      setReport(data)
+    } catch {
+      // handled by global error toast
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleExport = async () => {
+    setDownloading(true)
+    try {
+      const url = `/api/compliance/reports/export?framework=${framework}&days=${days}`
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `compliance_${framework}_${days}d.zip`
+      a.click()
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="glass-card rounded-xl border border-border/50 p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex rounded-lg border border-border/50 overflow-hidden text-sm">
+            {FRAMEWORKS.map((fw) => (
+              <button
+                key={fw}
+                type="button"
+                onClick={() => { setFramework(fw); setReport(null) }}
+                className={cn('px-3 py-1.5 transition-colors uppercase text-xs font-medium',
+                  framework === fw ? 'gradient-primary text-white' : 'bg-card text-muted-foreground hover:bg-muted/50')}
+              >
+                {fw}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={generating}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-sm hover:bg-emerald-500/20 disabled:opacity-50 transition-colors"
+          >
+            <FileCheck className="w-4 h-4" />
+            {generating ? 'Generating…' : 'Generate Report'}
+          </button>
+          {report && (
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={downloading}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400 text-sm hover:bg-blue-500/20 disabled:opacity-50 transition-colors"
+            >
+              <Printer className="w-4 h-4" />
+              {downloading ? 'Downloading…' : 'Export Bundle (.zip)'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {report && (
+        <div className="glass-card rounded-xl border border-border/50 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">{framework.toUpperCase()} Compliance Report — Last {days} days</h3>
+          <pre className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-3 overflow-auto max-h-[480px] whitespace-pre-wrap">
+            {JSON.stringify(report, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {!report && !generating && (
+        <div className="glass-card rounded-xl border border-border/50 p-8 text-center">
+          <FileCheck className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">Select a framework and click Generate Report to view compliance status.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Scheduled tab ─────────────────────────────────────────────────────────────
+interface ScheduledReport {
+  id: number
+  name: string
+  framework: string
+  cadence: string
+  recipients: string[]
+  delivery_format: string
+  is_active: boolean
+  next_run_at: string | null
+  last_run_at: string | null
+}
+
+function ScheduledTab() {
+  const qc = useQueryClient()
+  const [name, setName] = useState('')
+  const [framework, setFramework] = useState<Framework>('soc2')
+  const [cadence, setCadence] = useState<'daily' | 'weekly'>('weekly')
+  const [recipients, setRecipients] = useState('')
+  const [showForm, setShowForm] = useState(false)
+
+  const { data: schedules = [], isLoading } = useQuery({
+    queryKey: ['scheduled-reports'],
+    queryFn: () => get<ScheduledReport[]>('/scheduled-reports'),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (body: object) => post<ScheduledReport>('/scheduled-reports', body),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['scheduled-reports'] }); setShowForm(false); setName(''); setRecipients('') },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => del<void>(`/scheduled-reports/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['scheduled-reports'] }),
+  })
+
+  const runMutation = useMutation({
+    mutationFn: (id: number) => post<void>(`/scheduled-reports/${id}/run`, {}),
+  })
+
+  const handleCreate = () => {
+    if (!name.trim() || !recipients.trim()) return
+    createMutation.mutate({
+      name: name.trim(),
+      framework,
+      cadence,
+      recipients: recipients.split(',').map((r) => r.trim()).filter(Boolean),
+    })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">Scheduled Compliance Reports</h3>
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 text-sm text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+        >
+          <Calendar className="w-4 h-4" />
+          New Schedule
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="glass-card rounded-xl border border-border/50 p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">New Scheduled Report</p>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Schedule name"
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm"
+          />
+          <div className="flex gap-2">
+            <div className="flex rounded-lg border border-border/50 overflow-hidden text-xs">
+              {FRAMEWORKS.map((fw) => (
+                <button key={fw} type="button" onClick={() => setFramework(fw)}
+                  className={cn('px-2.5 py-1.5 uppercase font-medium transition-colors',
+                    framework === fw ? 'gradient-primary text-white' : 'bg-card text-muted-foreground hover:bg-muted/50')}>
+                  {fw}
+                </button>
+              ))}
+            </div>
+            <div className="flex rounded-lg border border-border/50 overflow-hidden text-xs">
+              {(['daily', 'weekly'] as const).map((c) => (
+                <button key={c} type="button" onClick={() => setCadence(c)}
+                  className={cn('px-2.5 py-1.5 capitalize font-medium transition-colors',
+                    cadence === c ? 'gradient-primary text-white' : 'bg-card text-muted-foreground hover:bg-muted/50')}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input
+            type="text"
+            value={recipients}
+            onChange={(e) => setRecipients(e.target.value)}
+            placeholder="Recipients (comma-separated emails)"
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm"
+          />
+          <div className="flex gap-2">
+            <button type="button" onClick={handleCreate} disabled={createMutation.isPending || !name.trim() || !recipients.trim()}
+              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+              {createMutation.isPending ? 'Saving…' : 'Save Schedule'}
+            </button>
+            <button type="button" onClick={() => setShowForm(false)}
+              className="px-3 py-1.5 rounded-lg border border-border/50 text-sm text-muted-foreground hover:text-foreground">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="glass-card p-8 text-center text-muted-foreground text-sm">Loading schedules…</div>
+      ) : schedules.length === 0 ? (
+        <div className="glass-card rounded-xl border border-border/50 p-8 text-center">
+          <Calendar className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">No scheduled reports yet. Create one above.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {schedules.map((s) => (
+            <div key={s.id} className="glass-card rounded-xl border border-border/50 p-4 flex items-center gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{s.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {s.framework.toUpperCase()} · {s.cadence} · {s.recipients.join(', ')}
+                </p>
+                {s.next_run_at && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Next run: {new Date(s.next_run_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <span className={cn('text-xs px-2 py-0.5 rounded-full border',
+                s.is_active ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-border bg-muted/30 text-muted-foreground')}>
+                {s.is_active ? 'Active' : 'Paused'}
+              </span>
+              <button type="button" title="Run now"
+                onClick={() => runMutation.mutate(s.id)}
+                disabled={runMutation.isPending}
+                className="p-1.5 rounded-lg border border-border/50 text-muted-foreground hover:text-blue-400 hover:border-blue-500/30 transition-colors">
+                <Play className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" title="Delete"
+                onClick={() => deleteMutation.mutate(s.id)}
+                disabled={deleteMutation.isPending}
+                className="p-1.5 rounded-lg border border-border/50 text-muted-foreground hover:text-red-400 hover:border-red-500/30 transition-colors">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -313,7 +596,6 @@ function PrintReport({
 
   return (
     <div className="kestrel-report">
-      {/* ── Cover header ── */}
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16pt', borderBottom: '2pt solid #1e3a5f' }}>
         <tbody>
           <tr>
@@ -334,7 +616,6 @@ function PrintReport({
         </tbody>
       </table>
 
-      {/* ── Executive KPI summary ── */}
       <h2>Executive Summary</h2>
       <table>
         <thead>
@@ -373,14 +654,13 @@ function PrintReport({
             <td>Correlated alert groups</td>
           </tr>
           <tr>
-            <td>MITRE ATT&CK Coverage</td>
+            <td>MITRE ATT&amp;CK Coverage</td>
             <td className="right"><strong>{summary.coverage_pct}%</strong></td>
             <td>{summary.techniques_detected} of {summary.total_techniques} techniques detected (all-time)</td>
           </tr>
         </tbody>
       </table>
 
-      {/* ── Alerts by severity ── */}
       <h2>Alert Breakdown by Severity</h2>
       <table>
         <thead>
@@ -420,7 +700,6 @@ function PrintReport({
         </tbody>
       </table>
 
-      {/* ── Top sources ── */}
       {summary.top_sources.length > 0 && (
         <>
           <h2>Top Alert Sources</h2>
@@ -450,7 +729,6 @@ function PrintReport({
         </>
       )}
 
-      {/* ── Daily volume ── */}
       <h2>Daily Alert Volume</h2>
       <table>
         <thead><tr><th>Date</th><th className="right">Alerts</th></tr></thead>
@@ -464,10 +742,9 @@ function PrintReport({
         </tbody>
       </table>
 
-      {/* ── Top MITRE tactics ── */}
       {summary.top_tactics.length > 0 && (
         <>
-          <h2>Top MITRE ATT&CK Tactics Triggered</h2>
+          <h2>Top MITRE ATT&amp;CK Tactics Triggered</h2>
           <table>
             <thead><tr><th>Tactic</th><th className="right">Alert Count</th></tr></thead>
             <tbody>
@@ -479,10 +756,9 @@ function PrintReport({
         </>
       )}
 
-      {/* ── MITRE ATT&CK coverage ── */}
       {tacticStats.length > 0 && (
         <div className="rpt-page-break">
-          <h2>MITRE ATT&CK Detection Coverage</h2>
+          <h2>MITRE ATT&amp;CK Detection Coverage</h2>
           <p style={{ fontSize: '9pt', color: '#64748b', marginBottom: '8pt' }}>
             Overall coverage: <strong>{coverageSummary.coverage_percentage ?? 0}%</strong> — {coverageSummary.techniques_detected ?? 0} of {coverageSummary.total_techniques ?? 0} techniques detected across {coverageSummary.tactics_covered ?? 0} tactics.
           </p>
@@ -517,7 +793,6 @@ function PrintReport({
         </div>
       )}
 
-      {/* ── Analyst Activity (admin-only, only included when available) ── */}
       {activity && activity.analysts.length > 0 && (
         <div className="rpt-avoid-break">
           <h2>Analyst Activity</h2>
@@ -547,7 +822,6 @@ function PrintReport({
         </div>
       )}
 
-      {/* ── Footer ── */}
       <div style={{
         marginTop: '24pt', paddingTop: '8pt',
         borderTop: '1pt solid #cbd5e1',
@@ -568,8 +842,6 @@ export function Reports() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
 
-  // Always fetch summary; fetch coverage and activity up-front so they're
-  // ready both for the interactive tabs and for the print/export layout.
   const summaryQ = useQuery({
     queryKey: ['reports', 'summary', days],
     queryFn: () => getReportSummary(days),
@@ -583,7 +855,7 @@ export function Reports() {
   const activityQ = useQuery({
     queryKey: ['reports', 'analyst-activity', days],
     queryFn: () => getAnalystActivity(days),
-    enabled: isAdmin,  // Only admin has audit:read
+    enabled: isAdmin,
   })
 
   const s = summaryQ.data
@@ -594,6 +866,8 @@ export function Reports() {
   const TABS: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
     { id: 'summary', label: 'Executive Summary', icon: TrendingUp },
     { id: 'coverage', label: 'Detection Coverage', icon: Target },
+    { id: 'compliance', label: 'Compliance', icon: FileCheck },
+    { id: 'scheduled', label: 'Scheduled Reports', icon: Calendar },
     ...(isAdmin ? [{ id: 'analysts' as Tab, label: 'Analyst Activity', icon: Users }] : []),
   ]
 
@@ -601,7 +875,6 @@ export function Reports() {
 
   const handleExport = () => {
     if (!allLoaded) return
-    // Programmatically toggle: hide app, show print report, print, then restore
     const root = document.getElementById('root')
     const printEl = document.getElementById('kestrel-print-report')
     if (root) root.style.display = 'none'
@@ -613,7 +886,6 @@ export function Reports() {
 
   return (
     <>
-      {/* Print report rendered via portal directly on <body>, outside Layout */}
       {s && createPortal(
         <div id="kestrel-print-report" style={{ display: 'none' }}>
           <PrintReport
@@ -627,31 +899,34 @@ export function Reports() {
         document.body
       )}
 
-      {/* ── Interactive screen view ── */}
-      <div id="kestrel-screen-report" className="space-y-6">
+      <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <Breadcrumb items={[{ label: 'Home', to: '/app' }, { label: 'Reports' }]} />
-            <h1 className="text-2xl font-semibold text-soc-text">Reports</h1>
-            <p className="text-sm text-soc-muted mt-0.5">Platform analytics and detection coverage</p>
+            <h1 className="text-2xl font-semibold text-foreground">Reports</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Platform analytics and detection coverage</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-soc-border overflow-hidden text-sm">
+            {/* Day range selector */}
+            <div className="flex rounded-lg border border-border/50 overflow-hidden text-sm">
               {([7, 30, 90] as DayRange[]).map((d) => (
                 <button
                   key={d}
                   type="button"
                   onClick={() => setDays(d)}
                   className={cn(
-                    'px-3 py-1.5 transition-colors',
-                    days === d ? 'bg-blue-600 text-white' : 'bg-soc-surface text-soc-muted hover:text-soc-text'
+                    'px-3 py-1.5 transition-all duration-200',
+                    days === d
+                      ? 'gradient-primary text-white font-medium'
+                      : 'bg-card text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   )}
                 >
                   {d}d
                 </button>
               ))}
             </div>
+
             {/* Export — admin only */}
             {isAdmin ? (
               <button
@@ -659,7 +934,7 @@ export function Reports() {
                 onClick={handleExport}
                 disabled={!allLoaded}
                 title={!allLoaded ? 'Loading report data…' : 'Export as PDF via browser print dialog'}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-muted hover:text-soc-text text-sm transition-colors disabled:opacity-50 disabled:cursor-wait"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 bg-card text-muted-foreground hover:text-foreground hover:border-border text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-wait"
               >
                 <Printer className="w-4 h-4" />
                 {!allLoaded ? 'Loading…' : 'Export PDF'}
@@ -667,7 +942,7 @@ export function Reports() {
             ) : (
               <div
                 title="Only admins can export reports"
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-surface text-soc-muted/40 text-sm cursor-not-allowed select-none"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 bg-card text-muted-foreground/40 text-sm cursor-not-allowed select-none"
               >
                 <Lock className="w-4 h-4" />
                 Export PDF
@@ -693,7 +968,7 @@ export function Reports() {
         )}
 
         {/* Tabs */}
-        <div className="border-b border-soc-border">
+        <div className="border-b border-border/50">
           <nav className="flex gap-1">
             {TABS.map(({ id, label, icon: Icon }) => (
               <button
@@ -701,8 +976,10 @@ export function Reports() {
                 type="button"
                 onClick={() => setTab(id)}
                 className={cn(
-                  'flex items-center gap-2 py-2.5 px-3 text-sm font-medium border-b-2 transition-colors',
-                  tab === id ? 'border-blue-500 text-soc-text' : 'border-transparent text-soc-muted hover:text-soc-text'
+                  'flex items-center gap-2 py-2.5 px-3 text-sm font-medium border-b-2 -mb-px transition-all duration-200',
+                  tab === id
+                    ? 'border-primary text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
                 )}
               >
                 <Icon className="w-4 h-4" />
@@ -724,6 +1001,8 @@ export function Reports() {
             activityQ.isError ? <ErrorState title="Failed to load analyst activity" onRetry={() => activityQ.refetch()} /> :
               activityQ.data ? <AnalystTab analysts={activityQ.data.analysts} days={days} /> : null
         )}
+        {tab === 'compliance' && <ComplianceTab days={days} />}
+        {tab === 'scheduled' && <ScheduledTab />}
       </div>
     </>
   )

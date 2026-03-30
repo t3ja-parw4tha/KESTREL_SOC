@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, Clock, User, Shield, Activity, Target,
   CheckCircle, Circle, ExternalLink, Download, Globe,
@@ -7,6 +8,17 @@ import {
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { toast } from 'sonner'
+import { incidentsApi } from '@/api/incidents'
+import { useAuth } from '@/security/AuthContext'
+import { generateShiftHandover } from '@/api/aiAssistant'
+import {
+  addIncidentEvidenceUrl,
+  downloadEvidenceFile,
+  listIncidentEvidence,
+  uploadIncidentEvidenceFile,
+} from '@/api/evidence'
+import type { IncidentDetail as IncidentDetailData } from '@/api/incidents'
+import { get, put } from '@/api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MitreTech { id: string; name: string; phase: string }
@@ -28,87 +40,65 @@ interface IncidentData {
   response_actions: ResponseAction[]; threat_intel: ThreatIntel[]; artifacts: Artifact[]
 }
 
-// ─── Demo data ────────────────────────────────────────────────────────────────
-const demoIncidentDetails: Record<string, IncidentData> = {
-  'INC-001': {
-    id: 'INC-001',
-    title: 'Coordinated Brute Force Campaign',
-    description: 'Multiple brute force login attempts detected across several endpoints from a known botnet IP range. Over 15,000 failed login attempts in the past 6 hours targeting Active Directory accounts.',
-    severity: 'critical', status: 'in_progress', assigned_to: 'Sarah Chen',
-    created_at: '2026-03-12T02:15:00Z', updated_at: '2026-03-12T08:30:00Z',
-    mitre_tactics: ['Credential Access', 'Initial Access'],
-    mitre_techniques: [
-      { id: 'T1110.001', name: 'Brute Force: Password Guessing', phase: 'Credential Access' },
-      { id: 'T1078', name: 'Valid Accounts', phase: 'Initial Access' },
-      { id: 'T1021.001', name: 'Remote Desktop Protocol', phase: 'Lateral Movement' },
-    ],
-    linked_alerts: [
-      { id: 'ALR-001', title: 'Brute Force SSH Login Detected', severity: 'critical', status: 'new', source: 'Wazuh', created_at: '2026-03-12T08:15:00Z' },
-      { id: 'ALR-004', title: 'Failed Login Attempt — admin', severity: 'high', status: 'new', source: 'Auth Logs', created_at: '2026-03-12T06:30:00Z' },
-      { id: 'ALR-009', title: 'Multiple Failed RDP Logins', severity: 'high', status: 'in_progress', source: 'Sysmon', created_at: '2026-03-12T05:00:00Z' },
-      { id: 'ALR-012', title: 'Account Lockout — svc_backup', severity: 'medium', status: 'new', source: 'Active Directory', created_at: '2026-03-12T04:45:00Z' },
-    ],
-    affected_assets: [
-      { type: 'server', name: 'prod-web-01', ip: '10.0.1.15', os: 'Ubuntu 22.04', status: 'compromised' },
-      { type: 'server', name: 'DC02', ip: '10.0.0.5', os: 'Windows Server 2022', status: 'targeted' },
-      { type: 'workstation', name: 'WS-FIN-042', ip: '10.0.5.42', os: 'Windows 11', status: 'targeted' },
-      { type: 'user', name: 'root', ip: '—', os: '—', status: 'compromised' },
-      { type: 'user', name: 'svc_backup', ip: '—', os: '—', status: 'locked' },
-    ],
-    attacker_ips: [
-      { ip: '185.220.101.34', geo: 'Netherlands', isp: 'TOR Exit Node', reputation: 'malicious', reports: 47 },
-      { ip: '45.33.49.119', geo: 'United States', isp: 'DigitalOcean', reputation: 'suspicious', reports: 12 },
-      { ip: '91.219.236.222', geo: 'Romania', isp: 'M247 Ltd', reputation: 'malicious', reports: 89 },
-    ],
-    timeline: [
-      { time: '2026-03-12T02:15:00Z', event: 'Incident created from correlated alerts', type: 'system', actor: 'System' },
-      { time: '2026-03-12T02:20:00Z', event: 'Auto-assigned to Sarah Chen (on-call)', type: 'system', actor: 'Playbook PB-001' },
-      { time: '2026-03-12T03:00:00Z', event: 'Initial triage complete — confirmed brute force campaign', type: 'action', actor: 'Sarah Chen' },
-      { time: '2026-03-12T04:00:00Z', event: 'Blocked IP 185.220.101.34 at perimeter firewall', type: 'action', actor: 'Sarah Chen' },
-      { time: '2026-03-12T04:45:00Z', event: 'New alert ALR-012 linked: Account lockout svc_backup', type: 'correlation', actor: 'System' },
-      { time: '2026-03-12T05:30:00Z', event: 'Blocked IP range 91.219.236.0/24 at firewall', type: 'action', actor: 'Marcus Webb' },
-      { time: '2026-03-12T06:00:00Z', event: 'Verified no successful compromises in auth.log', type: 'action', actor: 'Sarah Chen' },
-      { time: '2026-03-12T08:00:00Z', event: 'Rate limiting enabled on all SSH endpoints', type: 'action', actor: 'Alex Rivera' },
-      { time: '2026-03-12T08:30:00Z', event: 'Status changed to In Progress — monitoring for new activity', type: 'action', actor: 'Sarah Chen' },
-    ],
-    response_actions: [
-      { id: 'ra-1', label: 'Block attacker IPs at perimeter firewall', completed: true, assignee: 'Sarah Chen' },
-      { id: 'ra-2', label: 'Verify no successful logins from attacker IPs', completed: true, assignee: 'Sarah Chen' },
-      { id: 'ra-3', label: 'Enable SSH rate limiting on all production servers', completed: true, assignee: 'Alex Rivera' },
-      { id: 'ra-4', label: 'Reset credentials for targeted accounts (root, svc_backup)', completed: false, assignee: 'Marcus Webb' },
-      { id: 'ra-5', label: 'Deploy fail2ban on remaining SSH endpoints', completed: false, assignee: 'Alex Rivera' },
-      { id: 'ra-6', label: 'Conduct post-incident review and update runbook', completed: false, assignee: 'Sarah Chen' },
-      { id: 'ra-7', label: 'Submit IOCs to threat intelligence sharing platform', completed: false, assignee: 'Marcus Webb' },
-    ],
-    threat_intel: [
-      { source: 'VirusTotal', url: 'https://www.virustotal.com', label: '185.220.101.34 — 12/94 detections' },
-      { source: 'AbuseIPDB', url: 'https://www.abuseipdb.com', label: '185.220.101.34 — Confidence 100%' },
-      { source: 'Shodan', url: 'https://www.shodan.io', label: '185.220.101.34 — Open ports: 22, 80, 443' },
-      { source: 'TOR Project', url: 'https://metrics.torproject.org', label: 'Confirmed TOR exit node since 2025-11-02' },
-    ],
-    artifacts: [
-      { name: 'auth.log (prod-web-01)', type: 'log', size: '4.2 MB', uploaded_by: 'Sarah Chen' },
-      { name: 'pcap_capture_0312.pcap', type: 'pcap', size: '28.7 MB', uploaded_by: 'Marcus Webb' },
-      { name: 'firewall_rules_before.txt', type: 'config', size: '1.1 KB', uploaded_by: 'Alex Rivera' },
-      { name: 'memory_dump_ws-fin-042.raw', type: 'memory', size: '2.1 GB', uploaded_by: 'Marcus Webb' },
-    ],
-  },
-}
+// ─── Map backend response to display shape ────────────────────────────────────
+function mapApiToDisplay(api: IncidentDetailData): IncidentData {
+  const mitreTechs: MitreTech[] = (api.mitre_techniques || []).map(t => ({
+    id: t.technique_id || '',
+    name: t.technique_name || t.technique_id || '',
+    phase: t.tactic || t.phase || '',
+  }))
 
-function createFallbackIncident(id: string): IncidentData {
-  return {
-    id, severity: 'medium', status: 'open', assigned_to: null,
-    title: `Incident ${id}`,
-    description: 'Incident created from alert investigation. Details pending initial triage.',
-    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    mitre_tactics: [], mitre_techniques: [], linked_alerts: [],
-    timeline: [{ time: new Date().toISOString(), event: `Incident ${id} created`, type: 'system', actor: 'System' }],
-    response_actions: [
+  const linkedAlerts: LinkedAlert[] = (api.alerts || []).map(a => ({
+    id: a.id,
+    title: a.title,
+    severity: a.severity,
+    status: 'new',
+    source: a.source || 'Unknown',
+    created_at: a.created_at || new Date().toISOString(),
+  }))
+
+  const timeline: TimelineEntry[] = (api.attack_timeline || []).map(e => ({
+    time: e.time || e.timestamp || new Date().toISOString(),
+    event: e.event || e.title || 'Alert event',
+    type: e.type || 'correlation',
+    actor: e.actor || 'System',
+  }))
+
+  const responseActions: ResponseAction[] = (api.recommended_actions || []).map((label, i) => ({
+    id: `ra-${i + 1}`,
+    label,
+    completed: false,
+    assignee: null,
+  }))
+
+  // Default actions if none from AI decisions
+  if (responseActions.length === 0) {
+    responseActions.push(
       { id: 'ra-1', label: 'Perform initial triage and scope assessment', completed: false, assignee: null },
       { id: 'ra-2', label: 'Identify and contain affected assets', completed: false, assignee: null },
       { id: 'ra-3', label: 'Document findings and remediation steps', completed: false, assignee: null },
-    ],
-    affected_assets: [], attacker_ips: [], threat_intel: [], artifacts: [],
+    )
+  }
+
+  return {
+    id: api.incident_id,
+    title: api.title,
+    description: api.description,
+    severity: (['critical', 'high', 'medium', 'low'].includes(api.severity)
+      ? api.severity : 'medium') as IncidentData['severity'],
+    status: api.status || 'open',
+    assigned_to: api.assigned_to,
+    created_at: api.created_at || new Date().toISOString(),
+    updated_at: api.updated_at || new Date().toISOString(),
+    mitre_tactics: api.mitre_tactics || [],
+    mitre_techniques: mitreTechs,
+    linked_alerts: linkedAlerts,
+    affected_assets: [],
+    attacker_ips: [],
+    timeline,
+    response_actions: responseActions,
+    threat_intel: [],
+    artifacts: [],
   }
 }
 
@@ -136,34 +126,215 @@ function AssetIcon({ type }: { type: string }) {
   }
 }
 
+function DetailSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-start gap-4">
+        <div className="h-8 w-8 bg-muted/50 rounded-lg" />
+        <div className="flex-1 space-y-2">
+          <div className="flex gap-2">
+            <div className="h-4 w-16 bg-muted/50 rounded" />
+            <div className="h-4 w-12 bg-muted/50 rounded" />
+            <div className="h-4 w-24 bg-muted/50 rounded" />
+          </div>
+          <div className="h-5 w-2/3 bg-muted/50 rounded" />
+          <div className="h-4 w-full bg-muted/30 rounded" />
+        </div>
+      </div>
+      <div className="h-2 bg-muted/40 rounded-full" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="h-40 bg-muted/30 rounded-xl" />
+        <div className="h-40 bg-muted/30 rounded-xl" />
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export function IncidentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [activeTab, setActiveTab] = useState('overview')
+  const [evidenceUrl, setEvidenceUrl] = useState('')
+  const [evidenceNotes, setEvidenceNotes] = useState('')
+  const [evidenceBusy, setEvidenceBusy] = useState(false)
+  const [handoverBusy, setHandoverBusy] = useState(false)
+  const [handoverText, setHandoverText] = useState('')
+  const queryClient = useQueryClient()
+  const isViewer = user?.role === 'viewer'
 
-  const incident = demoIncidentDetails[id || 'INC-001'] || createFallbackIncident(id || 'INC-???')
-  const [responseActions, setResponseActions] = useState(incident.response_actions)
+  const { data: apiData, isLoading, isError } = useQuery({
+    queryKey: ['incident', id],
+    queryFn: () => incidentsApi.get(id!),
+    enabled: !!id,
+    retry: 1,
+    staleTime: 30_000,
+  })
 
-  const completedActions = responseActions.filter(a => a.completed).length
-  const progressPercent = responseActions.length > 0 ? Math.round((completedActions / responseActions.length) * 100) : 0
+  const { data: savedActions } = useQuery({
+    queryKey: ['incident-actions', id],
+    queryFn: () => get<ResponseAction[]>(`/incidents/${id}/actions`),
+    enabled: !!id,
+    retry: 1,
+    staleTime: 60_000,
+  })
+
+  const { data: incidentEvidence = [], isLoading: evidenceLoading } = useQuery({
+    queryKey: ['incident-evidence', id],
+    queryFn: () => listIncidentEvidence(id!),
+    enabled: !!id,
+    staleTime: 20_000,
+  })
+
+  const incident: IncidentData | null = apiData ? mapApiToDisplay(apiData) : null
+
+  const [localActions, setLocalActions] = useState<ResponseAction[] | null>(null)
+
+  // When saved actions load from backend, sync them; otherwise fall back to derived actions
+  useEffect(() => {
+    if (savedActions && savedActions.length > 0) {
+      setLocalActions(savedActions)
+    }
+  }, [savedActions])
+
+  const effectiveActions = localActions ?? incident?.response_actions ?? []
+
+  const saveActionsMutation = useMutation({
+    mutationFn: (actions: ResponseAction[]) =>
+      put<ResponseAction[]>(`/incidents/${id}/actions`, { actions }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['incident-actions', id] })
+    },
+    onError: () => toast.error('Failed to save action'),
+  })
+
+  const completedActions = effectiveActions.filter(a => a.completed).length
+  const progressPercent = effectiveActions.length > 0 ? Math.round((completedActions / effectiveActions.length) * 100) : 0
   const defaultStatus = { label: 'Open', cls: 'bg-destructive/15 text-destructive border-destructive/30' }
-  const status = statusConfig[incident.status] ?? defaultStatus
+  const status = incident ? (statusConfig[incident.status] ?? defaultStatus) : defaultStatus
 
   const toggleAction = (actionId: string) => {
-    setResponseActions(prev => prev.map(a => a.id === actionId ? { ...a, completed: !a.completed } : a))
+    const updated = effectiveActions.map(a => a.id === actionId ? { ...a, completed: !a.completed } : a)
+    setLocalActions(updated)
+    saveActionsMutation.mutate(updated)
     toast.success('Response action updated')
+  }
+
+  const addEvidenceUrl = async () => {
+    if (!id || !evidenceUrl.trim()) return
+    setEvidenceBusy(true)
+    try {
+      await addIncidentEvidenceUrl(id, {
+        url: evidenceUrl.trim(),
+        notes: evidenceNotes.trim() || undefined,
+      })
+      setEvidenceUrl('')
+      setEvidenceNotes('')
+      queryClient.invalidateQueries({ queryKey: ['incident-evidence', id] })
+      toast.success('Evidence URL attached')
+    } catch {
+      toast.error('Failed to attach evidence URL')
+    } finally {
+      setEvidenceBusy(false)
+    }
+  }
+
+  const uploadEvidenceFile = async (file: File) => {
+    if (!id) return
+    setEvidenceBusy(true)
+    try {
+      await uploadIncidentEvidenceFile(id, file, evidenceNotes.trim() || undefined)
+      setEvidenceNotes('')
+      queryClient.invalidateQueries({ queryKey: ['incident-evidence', id] })
+      toast.success('Artifact uploaded')
+    } catch {
+      toast.error('Failed to upload artifact')
+    } finally {
+      setEvidenceBusy(false)
+    }
+  }
+
+  const runShiftHandover = async () => {
+    setHandoverBusy(true)
+    try {
+      const result = await generateShiftHandover()
+      setHandoverText(result.handover)
+      toast.success('Shift handover generated')
+    } catch {
+      toast.error('Failed to generate shift handover')
+    } finally {
+      setHandoverBusy(false)
+    }
   }
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
-    { id: 'alerts', label: `Linked Alerts (${incident.linked_alerts.length})` },
+    { id: 'alerts', label: `Linked Alerts (${incident?.linked_alerts.length ?? 0})` },
     { id: 'assets', label: 'Assets & IPs' },
     { id: 'response', label: 'Response Actions' },
     { id: 'timeline', label: 'Timeline' },
     { id: 'intel', label: 'Threat Intel' },
+    { id: 'attribution', label: 'Threat Attribution' },
     { id: 'artifacts', label: 'Artifacts' },
   ]
+
+  const { data: attribution } = useQuery({
+    queryKey: ['threat-attribution', id],
+    queryFn: async () => {
+      const payload = await get<{
+        actor_name?: string | null
+        confidence?: number | null
+        ttps_matched?: string[]
+        mitre_overlap?: string[]
+        summary?: string | null
+        sources?: string[]
+        techniques?: string[]
+        candidates?: Array<{ actor: string; confidence: number; matched_ttps: string[] }>
+      }>(`/threat-attribution/incidents/${id}`)
+
+      if (Array.isArray(payload.candidates)) {
+        const top = payload.candidates[0] || null
+        return {
+          actor_name: top?.actor ?? null,
+          confidence: top?.confidence ?? null,
+          ttps_matched: top?.matched_ttps ?? [],
+          mitre_overlap: payload.techniques ?? [],
+          summary: top ? 'Top attribution candidate based on MITRE technique overlap.' : null,
+          sources: ['MITRE technique overlap'],
+        }
+      }
+
+      return {
+        actor_name: payload.actor_name ?? null,
+        confidence: payload.confidence ?? null,
+        ttps_matched: payload.ttps_matched ?? [],
+        mitre_overlap: payload.mitre_overlap ?? [],
+        summary: payload.summary ?? null,
+        sources: payload.sources ?? [],
+      }
+    },
+    enabled: activeTab === 'attribution',
+  })
+
+  if (isLoading) return <DetailSkeleton />
+
+  if (!incident) {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <button
+          type="button"
+          onClick={() => navigate('/app/incidents')}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to Incidents
+        </button>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+          {isError ? 'Could not load incident from API.' : 'Incident is unavailable.'}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -193,10 +364,31 @@ export function IncidentDetail() {
               <span className="flex items-center gap-1"><User className="h-3 w-3" /> {incident.assigned_to}</span>
             )}
             <span className="flex items-center gap-1"><Shield className="h-3 w-3" /> {incident.linked_alerts.length} linked alerts</span>
-            <span className="flex items-center gap-1"><Activity className="h-3 w-3" /> {completedActions}/{responseActions.length} actions complete</span>
+            <span className="flex items-center gap-1"><Activity className="h-3 w-3" /> {completedActions}/{effectiveActions.length} actions complete</span>
           </div>
+          {!isViewer && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={runShiftHandover}
+                disabled={handoverBusy}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400 text-xs font-medium hover:bg-blue-500/20 disabled:opacity-40"
+              >
+                {handoverBusy ? 'Generating…' : 'Generate Shift Handover'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {handoverText && (
+        <div className="glass-card p-4 space-y-2 border border-blue-500/20">
+          <h3 className="text-sm font-semibold text-foreground">Shift Handover Draft</h3>
+          <pre className="text-xs whitespace-pre-wrap text-foreground/90 leading-relaxed bg-muted/20 border border-border/30 rounded-lg p-3 overflow-auto max-h-72">
+            {handoverText}
+          </pre>
+        </div>
+      )}
 
       {/* Progress bar */}
       <div className="space-y-1.5">
@@ -229,20 +421,26 @@ export function IncidentDetail() {
             <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground">
               <Target className="h-4 w-4 text-primary" /> MITRE ATT&CK Kill Chain
             </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {incident.mitre_tactics.map(t => (
-                <span key={t} className="inline-flex items-center px-2 py-0.5 rounded bg-muted/50 border border-border/40 text-[10px] text-muted-foreground">{t}</span>
-              ))}
-            </div>
-            <div className="space-y-2">
-              {incident.mitre_techniques.map(tech => (
-                <div key={tech.id} className="flex items-center gap-3 text-xs p-2 rounded-lg bg-muted/30">
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-border/50 bg-muted/40 text-[10px] font-mono shrink-0 text-foreground">{tech.id}</span>
-                  <span className="flex-1 text-foreground">{tech.name}</span>
-                  <span className="text-muted-foreground text-[10px]">{tech.phase}</span>
-                </div>
-              ))}
-            </div>
+            {incident.mitre_tactics.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {incident.mitre_tactics.map(t => (
+                  <span key={t} className="inline-flex items-center px-2 py-0.5 rounded bg-muted/50 border border-border/40 text-[10px] text-muted-foreground">{t}</span>
+                ))}
+              </div>
+            )}
+            {incident.mitre_techniques.length > 0 ? (
+              <div className="space-y-2">
+                {incident.mitre_techniques.map(tech => (
+                  <div key={tech.id} className="flex items-center gap-3 text-xs p-2 rounded-lg bg-muted/30">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-border/50 bg-muted/40 text-[10px] font-mono shrink-0 text-foreground">{tech.id}</span>
+                    <span className="flex-1 text-foreground">{tech.name}</span>
+                    <span className="text-muted-foreground text-[10px]">{tech.phase}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">No MITRE techniques identified yet.</p>
+            )}
           </div>
           <div className="glass-card p-4 space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Incident Summary</h3>
@@ -341,7 +539,7 @@ export function IncidentDetail() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-foreground">Response Checklist</h3>
-              <p className="text-[10px] text-muted-foreground">{completedActions} of {responseActions.length} actions completed</p>
+              <p className="text-[10px] text-muted-foreground">{completedActions} of {effectiveActions.length} actions completed</p>
             </div>
             <button type="button" className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border text-foreground text-xs hover:bg-accent transition-colors">
               <Plus className="h-3 w-3" /> Add Action
@@ -351,7 +549,7 @@ export function IncidentDetail() {
             <div className="h-full rounded-full gradient-primary transition-all duration-500" style={{ width: `${progressPercent}%` }} />
           </div>
           <div className="space-y-2">
-            {responseActions.map(action => (
+            {effectiveActions.map(action => (
               <div key={action.id} className={cn('flex items-center gap-3 p-3 rounded-lg border transition-colors',
                 action.completed ? 'bg-muted/10 border-border/20' : 'bg-card/50 border-border/40')}>
                 <button type="button" onClick={() => toggleAction(action.id)}
@@ -382,31 +580,34 @@ export function IncidentDetail() {
       {activeTab === 'timeline' && (
         <div className="glass-card p-4">
           <h3 className="text-sm font-semibold text-foreground mb-4">Incident Timeline</h3>
-          <div className="relative">
-            {incident.timeline.map((entry, i) => (
-              <div key={i} className="relative flex gap-4 pb-6 last:pb-0">
-                {i < incident.timeline.length - 1 && (
-                  <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border" />
-                )}
-                <div className={cn('relative z-10 mt-1 h-[22px] w-[22px] shrink-0 rounded-full border-2 flex items-center justify-center',
-                  entry.type === 'system' ? 'border-primary bg-primary/20' :
-                  entry.type === 'correlation' ? 'border-purple-500 bg-purple-500/20' :
-                  'border-green-500 bg-green-500/20')}>
-                  <div className={cn('h-2 w-2 rounded-full',
-                    entry.type === 'system' ? 'bg-primary' :
-                    entry.type === 'correlation' ? 'bg-purple-500' : 'bg-green-500')} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-foreground">{entry.event}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-                    <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" /> {new Date(entry.time).toLocaleString()}</span>
-                    <span className="flex items-center gap-1"><User className="h-2.5 w-2.5" /> {entry.actor}</span>
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-muted/40 border border-border/30 text-[9px] capitalize">{entry.type}</span>
-                  </p>
-                </div>
+          {incident.timeline.length === 0
+            ? <p className="text-xs text-muted-foreground text-center py-6">No timeline events yet.</p>
+            : <div className="relative">
+                {incident.timeline.map((entry, i) => (
+                  <div key={i} className="relative flex gap-4 pb-6 last:pb-0">
+                    {i < incident.timeline.length - 1 && (
+                      <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border" />
+                    )}
+                    <div className={cn('relative z-10 mt-1 h-[22px] w-[22px] shrink-0 rounded-full border-2 flex items-center justify-center',
+                      entry.type === 'system' ? 'border-primary bg-primary/20' :
+                      entry.type === 'correlation' ? 'border-purple-500 bg-purple-500/20' :
+                      'border-green-500 bg-green-500/20')}>
+                      <div className={cn('h-2 w-2 rounded-full',
+                        entry.type === 'system' ? 'bg-primary' :
+                        entry.type === 'correlation' ? 'bg-purple-500' : 'bg-green-500')} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground">{entry.event}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" /> {new Date(entry.time).toLocaleString()}</span>
+                        <span className="flex items-center gap-1"><User className="h-2.5 w-2.5" /> {entry.actor}</span>
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-muted/40 border border-border/30 text-[9px] capitalize">{entry.type}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+          }
         </div>
       )}
 
@@ -432,30 +633,160 @@ export function IncidentDetail() {
         </div>
       )}
 
+      {/* ─── Threat Attribution ─── */}
+      {activeTab === 'attribution' && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-foreground">Threat Actor Attribution</h3>
+          {!attribution ? (
+            <div className="glass-card p-6 text-center text-muted-foreground text-sm">Loading attribution data…</div>
+          ) : !attribution.actor_name ? (
+            <div className="glass-card p-6 text-center text-muted-foreground text-sm">No threat actor attribution available for this incident.</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="glass-card p-4 rounded-xl border border-border/50">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Attributed Actor</p>
+                    <p className="text-lg font-semibold text-foreground">{attribution.actor_name}</p>
+                    {attribution.summary && <p className="text-xs text-muted-foreground mt-1">{attribution.summary}</p>}
+                  </div>
+                  {attribution.confidence != null && (
+                    <div className={cn('rounded-lg border px-3 py-2 text-center min-w-[80px]',
+                      attribution.confidence >= 70 ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                      : attribution.confidence >= 40 ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                      : 'border-border bg-muted/30 text-muted-foreground')}>
+                      <p className="text-xs">Confidence</p>
+                      <p className="text-xl font-bold">{attribution.confidence}%</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {attribution.ttps_matched.length > 0 && (
+                <div className="glass-card p-4 rounded-xl border border-border/50">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">TTPs Matched</p>
+                  <div className="flex flex-wrap gap-2">
+                    {attribution.ttps_matched.map((ttp) => (
+                      <span key={ttp} className="px-2 py-1 rounded-md bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-mono">{ttp}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {attribution.mitre_overlap.length > 0 && (
+                <div className="glass-card p-4 rounded-xl border border-border/50">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">MITRE ATT&CK Overlap</p>
+                  <div className="flex flex-wrap gap-2">
+                    {attribution.mitre_overlap.map((tech) => (
+                      <span key={tech} className="px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-mono">{tech}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {attribution.sources.length > 0 && (
+                <div className="glass-card p-4 rounded-xl border border-border/50">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Intelligence Sources</p>
+                  <div className="space-y-1">
+                    {attribution.sources.map((src, i) => (
+                      <p key={i} className="text-xs text-muted-foreground">• {src}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ─── Artifacts ─── */}
       {activeTab === 'artifacts' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">Artifact Gallery</h3>
-            <button type="button" className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border text-foreground text-xs hover:bg-accent transition-colors">
-              <Plus className="h-3 w-3" /> Upload Artifact
-            </button>
+            {!isViewer && (
+              <label className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border text-foreground text-xs hover:bg-accent transition-colors cursor-pointer">
+                <Plus className="h-3 w-3" /> Upload Artifact
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.png,.jpg,.jpeg,.txt,.log,.csv,.json,.pcap"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void uploadEvidenceFile(file)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+            )}
           </div>
-          {incident.artifacts.length === 0
+          {!isViewer && (
+            <div className="glass-card p-3 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={evidenceUrl}
+                  onChange={(e) => setEvidenceUrl(e.target.value)}
+                  placeholder="Attach URL evidence"
+                  className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={addEvidenceUrl}
+                  disabled={evidenceBusy || !evidenceUrl.trim()}
+                  className="px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400 text-xs font-medium disabled:opacity-40"
+                >
+                  Add URL
+                </button>
+              </div>
+              <input
+                type="text"
+                value={evidenceNotes}
+                onChange={(e) => setEvidenceNotes(e.target.value)}
+                placeholder="Optional notes"
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-xs"
+              />
+            </div>
+          )}
+          {evidenceLoading
+            ? <div className="text-center py-12 text-sm text-muted-foreground">Loading artifacts…</div>
+            : incidentEvidence.length === 0
             ? <div className="text-center py-12 text-sm text-muted-foreground">No artifacts uploaded yet.</div>
             : <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {incident.artifacts.map((artifact, i) => (
-                  <div key={i} className="glass-card-hover cursor-pointer p-4 flex items-center gap-3">
+                {incidentEvidence.map((artifact) => (
+                  <div key={artifact.id} className="glass-card-hover cursor-pointer p-4 flex items-center gap-3">
                     <div className="h-10 w-10 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
                       <FileText className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium truncate text-foreground">{artifact.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{artifact.type.toUpperCase()} · {artifact.size} · by {artifact.uploaded_by}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {artifact.attachment_type.toUpperCase()} · {artifact.size_bytes ? `${(artifact.size_bytes / 1024).toFixed(1)} KB` : 'n/a'} · by {artifact.uploaded_by || 'analyst'}
+                      </p>
+                      {artifact.notes && <p className="text-[10px] text-muted-foreground truncate">{artifact.notes}</p>}
                     </div>
-                    <button type="button" title="Download" className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
-                      <Download className="h-3.5 w-3.5" />
-                    </button>
+                    {artifact.attachment_type === 'file'
+                      ? (
+                          <button
+                            type="button"
+                            title="Download"
+                            onClick={() => void downloadEvidenceFile(artifact.id, artifact.name)}
+                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </button>
+                        )
+                      : (
+                          <a
+                            href={artifact.external_url || '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"
+                            title="Open URL"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        )}
                   </div>
                 ))}
               </div>

@@ -45,9 +45,9 @@ async def notify_new_alert(alert_dict: dict[str, Any]) -> None:
         try:
             ok = await send_slack_alert(webhook, payload)
             if ok:
-                logger.info("notification.slack.sent", alert_id=payload.get("id"))
+                logger.info("notification.slack.sent alert_id=%s", payload.get("id"))
         except Exception as e:
-            logger.warning("notification.slack.error", error=str(e))
+            logger.warning("notification.slack.error: %s", e)
 
     # Email
     to_addr = (settings.alert_email_to or "").strip()
@@ -62,6 +62,6 @@ async def notify_new_alert(alert_dict: dict[str, Any]) -> None:
             )
             ok = await send_alert_email(to_addr, subject, body)
             if ok:
-                logger.info("notification.email.sent", alert_id=payload.get("id"))
+                logger.info("notification.email.sent alert_id=%s", payload.get("id"))
         except Exception as e:
-            logger.warning("notification.email.error", error=str(e))
+            logger.warning("notification.email.error: %s", e)

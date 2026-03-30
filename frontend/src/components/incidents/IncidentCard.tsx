@@ -14,15 +14,15 @@ export function IncidentCard({ incident }: IncidentCardProps) {
 
   return (
     <Card
-      className="cursor-pointer hover:border-soc-border transition-colors"
+      className="cursor-pointer hover:border-border transition-colors"
       onClick={() => navigate(`/app/incidents/${incident.incident_id}`)}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <p className="font-mono text-soc-text truncate" title={incident.incident_id}>
+          <p className="font-mono text-foreground truncate" title={incident.incident_id}>
             INC-{incident.incident_id.slice(0, 8)}
           </p>
-          <p className="text-sm text-soc-muted mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             {incident.alert_count} alert{incident.alert_count !== 1 ? 's' : ''}
           </p>
         </div>
@@ -32,18 +32,18 @@ export function IncidentCard({ incident }: IncidentCardProps) {
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between">
-        <div className="w-20 h-2 rounded-full bg-soc-border overflow-hidden">
+        <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
           <div
             className="h-full bg-orange-500 rounded-full"
             style={{ width: `${Math.min(100, incident.max_risk_score ?? 0)}%` }}
           />
         </div>
-        <span className="text-lg font-semibold text-soc-text">{incident.max_risk_score ?? 0}</span>
+        <span className="text-lg font-semibold text-foreground">{incident.max_risk_score ?? 0}</span>
       </div>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); navigate(`/app/incidents/${incident.incident_id}`) }}
-        className="mt-3 w-full py-1.5 rounded border border-soc-border text-soc-text hover:bg-soc-border/30 text-sm"
+        className="mt-3 w-full py-1.5 rounded border border-border text-foreground hover:bg-muted/30 text-sm"
       >
         Investigate
       </button>

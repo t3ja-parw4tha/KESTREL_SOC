@@ -59,8 +59,9 @@ describe('Login page', () => {
     expect(getSignInButton()).toBeInTheDocument()
   })
 
-  it('renders the SSO email input', () => {
+  it('renders the SSO email input after expanding SSO', () => {
     renderLogin()
+    fireEvent.click(screen.getByRole('button', { name: /Continue with SSO/i }))
     expect(screen.getByPlaceholderText(/name@company.com/i)).toBeInTheDocument()
   })
 
@@ -107,8 +108,8 @@ describe('Login page', () => {
     fireEvent.click(getSignInButton())
 
     await waitFor(() => {
-      expect(screen.getByText('Signing in...')).toBeInTheDocument()
-      expect(screen.getByText('Signing in...').closest('button')).toBeDisabled()
+      expect(screen.getByText('Authenticating…')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Authenticating/i })).toBeDisabled()
     })
   })
 

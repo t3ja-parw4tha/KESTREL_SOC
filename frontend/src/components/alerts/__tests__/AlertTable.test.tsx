@@ -52,7 +52,7 @@ describe('AlertTable', () => {
 
   it('shows empty state when no alerts', () => {
     renderTable({ alerts: [] })
-    expect(screen.getByText('No alerts match filters')).toBeInTheDocument()
+    expect(screen.getByText('No alerts match your filters')).toBeInTheDocument()
   })
 
   it('renders rows for each alert', () => {
@@ -66,7 +66,7 @@ describe('AlertTable', () => {
   it('shows loading skeleton when loading=true', () => {
     renderTable({ alerts: [], loading: true })
     // Skeleton shows, no empty state message
-    expect(screen.queryByText('No alerts match filters')).not.toBeInTheDocument()
+    expect(screen.queryByText('No alerts match your filters')).not.toBeInTheDocument()
   })
 
   it('toggles a single row checkbox', () => {
@@ -74,9 +74,7 @@ describe('AlertTable', () => {
     const onSelectionChange = vi.fn()
     renderTable({ alerts: [alert], selectedIds: new Set(), onSelectionChange })
 
-    const checkboxes = screen.getAllByRole('checkbox')
-    // First checkbox is the select-all header, second is the row
-    fireEvent.click(checkboxes[1]!)
+    fireEvent.click(screen.getByRole('button', { name: /Select alert-1/i }))
     expect(onSelectionChange).toHaveBeenCalledWith(new Set(['alert-1']))
   })
 
@@ -85,8 +83,7 @@ describe('AlertTable', () => {
     const onSelectionChange = vi.fn()
     renderTable({ alerts, selectedIds: new Set(), onSelectionChange })
 
-    const [headerCheckbox] = screen.getAllByRole('checkbox') as [HTMLElement]
-    fireEvent.click(headerCheckbox)
+    fireEvent.click(screen.getByRole('button', { name: /Select all/i }))
     expect(onSelectionChange).toHaveBeenCalledWith(new Set(['a1', 'a2']))
   })
 
@@ -94,8 +91,9 @@ describe('AlertTable', () => {
     const alert = makeAlert({ id: 'alert-1' })
     const onBulkAction = vi.fn()
     renderTable({ alerts: [alert], selectedIds: new Set(['alert-1']), onBulkAction })
-    // The bulk action bar shows selected count
-    expect(screen.getByText(/1 selected/i)).toBeInTheDocument()
+    // Bulk bar + table footer both show selection count
+    expect(screen.getAllByText(/1 selected/i).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('button', { name: 'Set In Progress' })).toBeInTheDocument()
   })
 
   it('navigates to alert detail on row click', () => {

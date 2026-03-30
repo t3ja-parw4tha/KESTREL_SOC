@@ -6,7 +6,7 @@ import pytest
 
 from app.models.alert import Alert, AlertSeverity, AlertStatus
 from app.models.playbook import Playbook
-from app.services.soar import _evaluate_condition, _execute_actions, run_playbooks_for_alert
+from app.services.soar import _evaluate_condition, execute_playbook_actions, run_playbooks_for_alert
 from app.schemas.playbook import PlaybookCondition, PlaybookAction
 
 
@@ -86,47 +86,47 @@ def test_condition_case_insensitive():
     assert _evaluate_condition(alert, cond) is True
 
 
-# ── _execute_actions ───────────────────────────────────────────────────────────
+# ── execute_playbook_actions ───────────────────────────────────────────────────
 
 def test_action_set_status_resolved():
     alert = make_alert()
-    _execute_actions(alert, [make_action("set_status", "resolved")], "Test Playbook")
+    execute_playbook_actions(alert, [make_action("set_status", "resolved").model_dump()], "Test Playbook")
     assert alert.status == AlertStatus.RESOLVED
 
 
 def test_action_set_status_resolved_updates_summary():
     alert = make_alert(ai_summary=None)
-    _execute_actions(alert, [make_action("set_status", "resolved")], "Auto Closer")
+    execute_playbook_actions(alert, [make_action("set_status", "resolved").model_dump()], "Auto Closer")
     assert "Auto Closer" in (alert.ai_summary or "")
 
 
 def test_action_set_severity():
     alert = make_alert(severity=AlertSeverity.LOW)
-    _execute_actions(alert, [make_action("set_severity", "Critical")], "Escalator")
+    execute_playbook_actions(alert, [make_action("set_severity", "Critical").model_dump()], "Escalator")
     assert alert.severity == AlertSeverity.CRITICAL
 
 
 def test_action_assign_to():
     alert = make_alert()
-    _execute_actions(alert, [make_action("assign_to", "alice")], "Assigner")
+    execute_playbook_actions(alert, [make_action("assign_to", "alice").model_dump()], "Assigner")
     assert alert.assigned_to == "alice"
 
 
 def test_action_add_tag_prefixes_title():
     alert = make_alert(title="Original Title")
-    _execute_actions(alert, [make_action("add_tag", "AUTO")], "Tagger")
+    execute_playbook_actions(alert, [make_action("add_tag", "AUTO").model_dump()], "Tagger")
     assert "[AUTO]" in alert.title
 
 
 def test_action_add_tag_not_duplicated():
     alert = make_alert(title="[AUTO] Original Title")
-    _execute_actions(alert, [make_action("add_tag", "AUTO")], "Tagger")
+    execute_playbook_actions(alert, [make_action("add_tag", "AUTO").model_dump()], "Tagger")
     assert alert.title.count("[AUTO]") == 1
 
 
 def test_action_invalid_severity_skipped():
     alert = make_alert(severity=AlertSeverity.HIGH)
-    _execute_actions(alert, [make_action("set_severity", "INVALID_LEVEL")], "Bad Playbook")
+    execute_playbook_actions(alert, [make_action("set_severity", "INVALID_LEVEL").model_dump()], "Bad Playbook")
     # Original severity unchanged
     assert alert.severity == AlertSeverity.HIGH
 

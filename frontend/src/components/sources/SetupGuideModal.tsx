@@ -151,12 +151,12 @@ export function SetupGuideModal({ sourceId, onClose }: SetupGuideModalProps) {
         aria-modal="true"
         aria-labelledby="setup-guide-title"
       >
-        <div className="bg-soc-surface border border-soc-border rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto my-4">
+        <div className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto my-4">
           <div className="p-6">
-            <h2 id="setup-guide-title" className="text-lg font-semibold text-soc-text mb-4">
+            <h2 id="setup-guide-title" className="text-lg font-semibold text-foreground mb-4">
               {content.title}
             </h2>
-            <div className="text-sm text-soc-muted whitespace-pre-wrap mb-4">
+            <div className="text-sm text-muted-foreground whitespace-pre-wrap mb-4">
               {content.instructions}
             </div>
             {content.codeBlocks.map((block, idx) => (
@@ -169,27 +169,27 @@ export function SetupGuideModal({ sourceId, onClose }: SetupGuideModalProps) {
                       toast.success('Copied to clipboard')
                     }}
                     className={cn(
-                      'inline-flex items-center gap-1 px-2 py-1 rounded border border-soc-border',
-                      'text-soc-muted hover:text-soc-text text-xs'
+                      'inline-flex items-center gap-1 px-2 py-1 rounded border border-border',
+                      'text-muted-foreground hover:text-foreground text-xs'
                     )}
                   >
                     <Copy className="w-3 h-3" />
                     Copy
                   </button>
                 </div>
-                <pre className="p-3 rounded-lg bg-soc-bg border border-soc-border text-xs text-soc-text overflow-x-auto">
+                <pre className="p-3 rounded-lg bg-background border border-border text-xs text-foreground overflow-x-auto">
                   <code>{block}</code>
                 </pre>
               </div>
             ))}
-            <p className="text-xs text-soc-muted mt-4 mb-6">
+            <p className="text-xs text-muted-foreground mt-4 mb-6">
               Status will automatically update to Active once KESTREL receives the first event from this source.
             </p>
             <div className="flex justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 rounded-lg border border-soc-border bg-soc-bg text-soc-text text-sm hover:bg-soc-border/50"
+                className="px-3 py-1.5 rounded-lg border border-border bg-background text-foreground text-sm hover:bg-muted/50"
               >
                 Close
               </button>

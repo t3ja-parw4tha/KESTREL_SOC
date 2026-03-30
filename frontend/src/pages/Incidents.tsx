@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Clock, User, Search, ChevronRight, Shield, Plus } from 'lucide-react'
-import { demoIncidents, incidentsApi } from '@/api/incidents'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, Clock, User, Search, ChevronRight, Shield, Plus, X } from 'lucide-react'
+import { incidentsApi } from '@/api/incidents'
+import { post } from '@/api/client'
 import type { Incident } from '@/api/incidents'
 import { cn } from '@/utils/cn'
+import { toast } from 'sonner'
 
 const statusConfig: Record<string, { label: string; cls: string }> = {
   open: { label: 'Open', cls: 'bg-destructive/15 text-destructive border-destructive/30' },
@@ -90,9 +92,15 @@ function IncidentCard({ incident }: { incident: Incident }) {
 }
 
 export function Incidents() {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [severityFilter, setSeverityFilter] = useState('all')
+  const [showCreate, setShowCreate] = useState(false)
+  const [alertIdsInput, setAlertIdsInput] = useState('')
+  const [titleOverride, setTitleOverride] = useState('')
+
   const { data: apiData, isLoading, isError, refetch } = useQuery({
     queryKey: ['incidents', search, statusFilter, severityFilter],
     queryFn: () => incidentsApi.list({
@@ -103,8 +111,30 @@ export function Incidents() {
     retry: 1,
     staleTime: 30_000,
   })
+
+  const createMut = useMutation({
+    mutationFn: (body: { alert_ids: string[]; title_override?: string }) =>
+      post<Incident>('/incidents', body),
+    onSuccess: (inc) => {
+      void qc.invalidateQueries({ queryKey: ['incidents'] })
+      toast.success('Incident created')
+      setShowCreate(false)
+      setAlertIdsInput('')
+      setTitleOverride('')
+      navigate(`/app/incidents/${inc.id}`)
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to create incident'),
+  })
+
+  const handleCreate = () => {
+    const ids = alertIdsInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    if (!ids.length) { toast.error('Enter at least one alert ID'); return }
+    createMut.mutate({ alert_ids: ids, title_override: titleOverride.trim() || undefined })
+  }
+
+  // P6-4: No demo fallback — show real data or empty/error state
   const rawItems = (apiData as { items?: Incident[] } | undefined)?.items
-  const incidents: Incident[] = rawItems?.length ? rawItems : demoIncidents
+  const incidents: Incident[] = rawItems ?? []
   const filtered = incidents.filter(inc => {
     if (search && !inc.title.toLowerCase().includes(search.toLowerCase())) return false
     if (statusFilter !== 'all' && inc.status !== statusFilter) return false
@@ -124,10 +154,31 @@ export function Incidents() {
           <h1 className="text-lg font-bold tracking-tight text-foreground">Incidents</h1>
           <p className="text-xs text-muted-foreground">Manage and track security incidents</p>
         </div>
-        <button type="button" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg gradient-primary text-white text-xs font-medium hover:opacity-90 transition-opacity">
-          <Plus className="h-3 w-3" /> New Incident
+        <button type="button" onClick={() => setShowCreate(v => !v)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg gradient-primary text-white text-xs font-medium hover:opacity-90 transition-opacity">
+          {showCreate ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+          {showCreate ? 'Cancel' : 'New Incident'}
         </button>
       </div>
+
+      {/* P6-4: Create incident form */}
+      {showCreate && (
+        <div className="glass-card rounded-xl border border-border/50 p-4 space-y-3">
+          <p className="text-sm font-medium text-foreground">Create Manual Incident</p>
+          <p className="text-xs text-muted-foreground">Group existing alerts under a new incident by providing their IDs.</p>
+          <input type="text" value={titleOverride} onChange={e => setTitleOverride(e.target.value)}
+            placeholder="Title (optional — auto-derived from alerts if blank)"
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm" />
+          <textarea value={alertIdsInput} onChange={e => setAlertIdsInput(e.target.value)}
+            placeholder="Alert IDs (comma or newline separated)"
+            rows={3}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm font-mono resize-none" />
+          <button type="button" onClick={handleCreate} disabled={createMut.isPending}
+            className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+            {createMut.isPending ? 'Creating…' : 'Create Incident'}
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Open', value: stats.open, color: 'text-destructive' },
@@ -168,7 +219,7 @@ export function Incidents() {
       {isError && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span className="flex-1">Could not load incidents from API — showing demo data.</span>
+          <span className="flex-1">Could not load incidents from the API. Check your connection or contact your administrator.</span>
           <button type="button" onClick={() => refetch()} className="underline hover:no-underline">Retry</button>
         </div>
       )}

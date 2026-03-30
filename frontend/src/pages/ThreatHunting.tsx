@@ -1,19 +1,19 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Crosshair, Play, Clock, Code, Search, Plus, Save, FileText,
   CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown,
   PanelLeftClose, PanelLeftOpen, BookOpen, Table2, BarChart3,
   Filter, Copy, ArrowUp, ArrowDown,
-  Database, Hash, Type, Calendar, ToggleLeft,
+  Database, Hash, Type, Calendar, ToggleLeft, Trash2,
   GripHorizontal,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
   Tooltip as RechartsTooltip, Cell,
 } from 'recharts'
-import { demoHunts, demoResults, huntingApi } from '@/api/hunting'
 import type { HuntQuery, HuntResult } from '@/api/hunting'
+import { get, post, del } from '@/api/client'
 import { toast } from 'sonner'
 import { cn } from '@/utils/cn'
 
@@ -406,6 +406,7 @@ interface CtxMenuState {
 
 // ─── Main Component ──────────────────────────────────────────────────────────────
 export function ThreatHunting() {
+  const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState<'hunts' | 'editor'>('hunts')
   const [selectedHunt, setSelectedHunt] = useState<HuntQuery | null>(null)
   const [queryText, setQueryText] = useState('')
@@ -421,13 +422,15 @@ export function ThreatHunting() {
   const [resultView, setResultView] = useState<'table' | 'chart'>('table')
   const [sortColumn, setSortColumn] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [isRunning, setIsRunning] = useState(false)
+  const [liveResults, setLiveResults] = useState<HuntResult[]>([])
   const [hasResults, setHasResults] = useState(false)
   const [resultsPanelHeight, setResultsPanelHeight] = useState(280)
   const [showAutocomplete, setShowAutocomplete] = useState(false)
   const [autocompleteItems, setAutocompleteItems] = useState<string[]>([])
   const [autocompleteIdx, setAutocompleteIdx] = useState(0)
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null)
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [saveName, setSaveName] = useState('')
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const resizeRef = useRef<{ startY: number; startH: number } | null>(null)
   const libraryRef = useRef<HTMLDivElement>(null)
@@ -452,14 +455,14 @@ export function ThreatHunting() {
     return () => document.removeEventListener('click', handler)
   }, [ctxMenu])
 
-  const { data: apiHunts } = useQuery({
+  const { data: apiHunts, isError: huntsError } = useQuery({
     queryKey: ['hunts'],
-    queryFn: () => huntingApi.listHunts(),
+    queryFn: () => get<HuntQuery[]>('/hunting/queries'),
     retry: 1,
     staleTime: 60_000,
   })
 
-  const hunts = (apiHunts && apiHunts.length > 0) ? apiHunts : demoHunts
+  const hunts = apiHunts ?? []
 
   const filteredHunts = hunts.filter(h =>
     !search ||
@@ -484,7 +487,8 @@ export function ThreatHunting() {
     setQueryText(hunt.query)
     setQueryType(hunt.type)
     setActiveTab('editor')
-    setHasResults(hunt.results_count > 0)
+    setHasResults(false)
+    setLiveResults([])
   }
 
   const toggleTable = (table: string) => {
@@ -511,30 +515,86 @@ export function ThreatHunting() {
     }
   }, [queryText])
 
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
+  const saveMutation = useMutation({
+    mutationFn: (data: { name: string; query: string; query_type: string }) =>
+      post<HuntQuery>('/hunting/queries', data),
+    onSuccess: (newHunt) => {
+      void qc.invalidateQueries({ queryKey: ['hunts'] })
+      setSelectedHunt(newHunt)
+      setShowSaveModal(false)
+      setSaveName('')
+      toast.success(`Hunt "${newHunt.name}" saved`)
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to save hunt'),
+  })
+
+  const runMutation = useMutation({
+    mutationFn: (huntId: string) =>
+      post<{ results: HuntResult[] }>(`/hunting/queries/${huntId}/run`),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ['hunts'] })
+      const results = data.results ?? []
+      setLiveResults(results)
+      setHasResults(true)
+      toast.success(`Hunt completed — ${results.length} results found`)
+    },
+    onError: () => {
+      setLiveResults([])
+      setHasResults(false)
+      toast.error('Hunt execution failed')
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (huntId: string) => del<void>(`/hunting/queries/${huntId}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['hunts'] })
+      if (selectedHunt) {
+        setSelectedHunt(null)
+        setQueryText('')
+        setActiveTab('hunts')
+        setHasResults(false)
+        setLiveResults([])
+      }
+      toast.success('Hunt deleted')
+    },
+    onError: () => toast.error('Failed to delete hunt'),
+  })
+
   const handleRunHunt = async () => {
     if (!queryText.trim()) {
       toast.error('Please enter a query first')
       return
     }
-    setIsRunning(true)
-    try {
-      if (selectedHunt?.id) {
-        const result = await huntingApi.runHunt(selectedHunt.id)
-        setHasResults(true)
-        toast.success(`Hunt completed — ${result.results?.length || 0} results found`)
-      } else {
-        await new Promise(r => setTimeout(r, 2000))
-        setHasResults(true)
-        toast.success(`Hunt completed — ${demoResults.length} results found`)
-      }
-    } catch {
-      await new Promise(r => setTimeout(r, 2000))
-      setHasResults(true)
-      toast.success(`Hunt completed — ${demoResults.length} results found`)
-    } finally {
-      setIsRunning(false)
+    if (selectedHunt?.id && !selectedHunt.id.startsWith('HUNT-00')) {
+      // Real saved hunt — run via API
+      runMutation.mutate(selectedHunt.id)
+    } else {
+      // Unsaved query or demo hunt — prompt to save first or run as demo
+      toast.info('Save the query first to run it against live data')
     }
   }
+
+  const handleSaveQuery = () => {
+    if (!queryText.trim()) {
+      toast.error('Please enter a query first')
+      return
+    }
+    setSaveName(selectedHunt?.name ?? '')
+    setShowSaveModal(true)
+  }
+
+  const handleConfirmSave = () => {
+    if (!saveName.trim()) {
+      toast.error('Name is required')
+      return
+    }
+    saveMutation.mutate({ name: saveName.trim(), query: queryText, query_type: queryType })
+  }
+
+  const displayedResults = liveResults
 
   const handleAddFilter = (field: string, value: string) => {
     const clause = `\n| where ${field} == "${value}"`
@@ -544,8 +604,8 @@ export function ThreatHunting() {
   }
 
   const sortedResults = useMemo(() => {
-    if (!sortColumn) return demoResults
-    return [...demoResults].sort((a, b) => {
+    if (!sortColumn) return displayedResults
+    return [...displayedResults].sort((a, b) => {
       const aVal = (a as unknown as Record<string, unknown>)[sortColumn]
       const bVal = (b as unknown as Record<string, unknown>)[sortColumn]
       if (typeof aVal === 'number' && typeof bVal === 'number') {
@@ -555,7 +615,7 @@ export function ThreatHunting() {
         ? String(aVal).localeCompare(String(bVal))
         : String(bVal).localeCompare(String(aVal))
     })
-  }, [sortColumn, sortDir])
+  }, [sortColumn, sortDir, displayedResults])
 
   const handleSort = (col: string) => {
     if (sortColumn === col) {
@@ -568,12 +628,12 @@ export function ThreatHunting() {
 
   const chartData = useMemo(() => {
     const buckets: Record<string, number> = {}
-    demoResults.forEach(r => {
+    displayedResults.forEach(r => {
       const hour = new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
       buckets[hour] = (buckets[hour] || 0) + 1
     })
     return Object.entries(buckets).map(([time, count]) => ({ time, count })).reverse()
-  }, [])
+  }, [displayedResults])
 
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const textarea = e.currentTarget
@@ -655,6 +715,12 @@ export function ThreatHunting() {
         </button>
       </div>
 
+      {huntsError && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+          Could not load saved hunts from API. No demo hunt data is shown.
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="space-y-3">
         <div className="flex items-center gap-0.5 bg-muted/50 rounded-lg p-1 w-fit">
@@ -720,14 +786,29 @@ export function ThreatHunting() {
                         <span>by {hunt.created_by}</span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      title="Open in editor"
-                      onClick={e => { e.stopPropagation(); handleSelectHunt(hunt) }}
-                      className="h-7 w-7 flex items-center justify-center rounded-md text-green-400 hover:text-green-300 hover:bg-green-500/10 transition-colors shrink-0"
-                    >
-                      <Play className="h-3 w-3" />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        title="Open in editor"
+                        onClick={e => { e.stopPropagation(); handleSelectHunt(hunt) }}
+                        className="h-7 w-7 flex items-center justify-center rounded-md text-green-400 hover:text-green-300 hover:bg-green-500/10 transition-colors"
+                      >
+                        <Play className="h-3 w-3" />
+                      </button>
+                      {!hunt.id.startsWith('HUNT-00') && (
+                        <button
+                          type="button"
+                          title="Delete hunt"
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (window.confirm('Delete this hunt query?')) deleteMutation.mutate(hunt.id)
+                          }}
+                          className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -827,19 +908,20 @@ export function ThreatHunting() {
 
               <button
                 type="button"
-                onClick={() => toast.success('Query saved')}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-foreground text-xs hover:bg-accent transition-colors"
+                onClick={handleSaveQuery}
+                disabled={saveMutation.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-foreground text-xs hover:bg-accent transition-colors disabled:opacity-50"
               >
-                <Save className="h-3 w-3" /> Save
+                {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
               </button>
 
               <button
                 type="button"
                 onClick={handleRunHunt}
-                disabled={isRunning}
+                disabled={runMutation.isPending}
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md gradient-primary text-white text-xs font-medium disabled:opacity-60 hover:opacity-90 transition-opacity"
               >
-                {isRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                {runMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
                 Run Hunt
               </button>
             </div>
@@ -1010,7 +1092,7 @@ export function ThreatHunting() {
                     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/20 shrink-0">
                       <span className="text-[11px] font-semibold text-foreground">Results</span>
                       <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-muted/50 text-[9px] text-muted-foreground">
-                        {demoResults.length} rows
+                        {displayedResults.length} rows
                       </span>
                       <div className="flex-1" />
                       <div className="flex items-center gap-0.5 bg-muted/30 rounded p-0.5">
@@ -1130,6 +1212,57 @@ export function ThreatHunting() {
           </div>
         )}
       </div>
+
+      {/* Save Query Modal */}
+      {showSaveModal && (
+        <div
+          className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowSaveModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-border bg-card shadow-2xl p-5 space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Save className="h-4 w-4 text-primary" /> Save Hunt Query
+              </h3>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Query Name</label>
+              <input
+                type="text"
+                value={saveName}
+                onChange={e => setSaveName(e.target.value)}
+                placeholder="e.g., PowerShell Empire Detection"
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-primary"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && handleConfirmSave()}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowSaveModal(false)}
+                className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSave}
+                disabled={saveMutation.isPending || !saveName.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg gradient-primary text-white text-xs font-medium disabled:opacity-50"
+              >
+                {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Context Menu */}
       {ctxMenu && (

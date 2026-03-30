@@ -1,6 +1,6 @@
 """MITRE ATT&CK API router."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -58,40 +58,67 @@ async def get_mitre_coverage(
     _user: Annotated[dict, Depends(require_permission("mitre:read"))],
     db: AsyncSession = Depends(get_db),
 ):
-    """Return MITRE coverage details and aggregated stats."""
+    """Return MITRE coverage details and aggregated stats including live alert severity."""
     techniques_out: list[dict] = []
-    for tid, entry in TECHNIQUES.items():
-        tactic_id = TACTIC_NAME_TO_ID.get(entry["tactic"], "TA0000")
+    for tid, technique_entry in TECHNIQUES.items():
+        tactic_id = TACTIC_NAME_TO_ID.get(technique_entry["tactic"], "TA0000")
         techniques_out.append(
             {
                 "id": tid,
-                "name": entry["name"],
+                "name": technique_entry["name"],
                 "tactic_id": tactic_id,
-                "tactic_name": entry["tactic"],
-                "description": entry["description"],
+                "tactic_name": technique_entry["tactic"],
+                "description": technique_entry["description"],
                 "alert_count": 0,
             }
         )
 
     result = await db.execute(
-        select(Alert.mitre_techniques).where(Alert.mitre_techniques.is_not(None))
+        select(Alert.mitre_techniques, Alert.severity, Alert.risk_score)
+        .where(Alert.mitre_techniques.is_not(None))
     )
-    rows = result.scalars().all()
+    rows = result.all()
 
     technique_counts: dict[str, int] = {}
+    # live_coverage: keyed by technique_id, carries alert_count, max_severity, max_risk_score
+    live_coverage: dict[str, dict[str, Any]] = {}
+    sev_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
     for row in rows:
-        if isinstance(row, list):
-            for t in row:
-                if isinstance(t, dict):
-                    tech_id = t.get("technique_id")
-                    if tech_id and isinstance(tech_id, str):
-                        technique_counts[tech_id] = technique_counts.get(tech_id, 0) + 1
-        elif isinstance(row, dict) and "items" in row:
-            for t in row.get("items") or []:
-                if isinstance(t, dict):
-                    tech_id = t.get("technique_id")
-                    if tech_id and isinstance(tech_id, str):
-                        technique_counts[tech_id] = technique_counts.get(tech_id, 0) + 1
+        mt = row.mitre_techniques
+        items: list = []
+        if isinstance(mt, list):
+            items = mt
+        elif isinstance(mt, dict) and "items" in mt:
+            items = mt.get("items") or []
+
+        row_sev = str(
+            row.severity.value if hasattr(row.severity, "value") else (row.severity or "low")
+        )
+        row_risk = float(row.risk_score or 0)
+
+        for t in items:
+            if not isinstance(t, dict):
+                continue
+            tech_id = t.get("technique_id") or t.get("id") or ""
+            if not tech_id or not isinstance(tech_id, str):
+                continue
+            technique_counts[tech_id] = technique_counts.get(tech_id, 0) + 1
+            if tech_id not in live_coverage:
+                live_coverage[tech_id] = {
+                    "technique_id": tech_id,
+                    "technique_name": t.get("technique_name") or t.get("name") or tech_id,
+                    "tactic": t.get("tactic") or t.get("phase") or "",
+                    "alert_count": 0,
+                    "max_severity": "low",
+                    "max_risk_score": 0,
+                }
+            cov_entry = live_coverage[tech_id]
+            cov_entry["alert_count"] += 1
+            if sev_order.get(row_sev, 0) > sev_order.get(cov_entry["max_severity"], 0):
+                cov_entry["max_severity"] = row_sev
+            if row_risk > cov_entry["max_risk_score"]:
+                cov_entry["max_risk_score"] = row_risk
 
     for t in techniques_out:
         t["alert_count"] = technique_counts.get(t["id"], 0)
@@ -132,4 +159,7 @@ async def get_mitre_coverage(
         "tactics_covered": tactics_covered_names,
         "coverage_percentage": coverage_pct,
         "alerts_by_technique": technique_counts,
+        # Live coverage list for frontend overlay (P6-6)
+        "coverage": list(live_coverage.values()),
+        "total_techniques": len(live_coverage),
     }

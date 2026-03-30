@@ -3,14 +3,14 @@ import type { MitreTechnique } from '@/types/mitre'
 
 /* ── Heat color scale based on alert count ─────────────────────────────── */
 function heatColor(count: number): string {
-  if (count === 0) return 'bg-soc-bg border-soc-border text-soc-muted'
+  if (count === 0) return 'bg-background border-border text-muted-foreground'
   if (count <= 3) return 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
   if (count <= 10) return 'bg-amber-500/15 border-amber-500/30 text-amber-400'
   return 'bg-red-500/15 border-red-500/30 text-red-400'
 }
 
 function heatDot(count: number): string {
-  if (count === 0) return 'bg-soc-border'
+  if (count === 0) return 'bg-muted'
   if (count <= 3) return 'bg-emerald-400'
   if (count <= 10) return 'bg-amber-400'
   return 'bg-red-400'
@@ -43,14 +43,14 @@ export function TechniqueCard({ technique, className, onClick }: TechniqueCardPr
       {/* Heat indicator dot */}
       <div className="flex items-center gap-2">
         <span className={cn('h-2 w-2 rounded-full shrink-0', heatDot(count))} />
-        <span className="font-mono font-semibold text-soc-text text-[11px]">{technique.id}</span>
+        <span className="font-mono font-semibold text-foreground text-[11px]">{technique.id}</span>
         {hasAlerts && (
           <span className="ml-auto text-[10px] font-semibold tabular-nums opacity-80">
             {count}
           </span>
         )}
       </div>
-      <p className="mt-1 text-[11px] leading-snug text-soc-muted truncate group-hover:text-soc-text transition-colors">
+      <p className="mt-1 text-[11px] leading-snug text-muted-foreground truncate group-hover:text-foreground transition-colors">
         {technique.name}
       </p>
     </div>

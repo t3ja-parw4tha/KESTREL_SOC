@@ -67,5 +67,5 @@ async def send_alert_email(
         logger.warning("email.aiosmtplib_not_installed")
         return False
     except Exception as e:
-        logger.warning("email.delivery_error", error=str(e))
+        logger.warning("email.delivery_error: %s", e)
         return False

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { Toaster } from 'sonner'
+import { Toaster, toast, useSonner } from 'sonner'
+import { X } from 'lucide-react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/security/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -14,6 +15,7 @@ import { Alerts } from '@/pages/Alerts'
 import { AlertDetail } from '@/pages/AlertDetail'
 import { Incidents } from '@/pages/Incidents'
 import { IncidentDetail } from '@/pages/IncidentDetail'
+import { Assets } from '@/pages/Assets'
 import MitreCoverage from '@/pages/MitreCoverage'
 import { Sources } from '@/pages/Sources'
 import { ThreatHunting } from '@/pages/ThreatHunting'
@@ -22,6 +24,8 @@ import { Playbooks } from '@/pages/Playbooks'
 import { Help } from '@/pages/Help'
 import { UserManagement } from '@/pages/UserManagement'
 import { Settings } from '@/pages/Settings'
+import { DetectionRules } from '@/pages/DetectionRules'
+import { Resilience } from '@/pages/Resilience'
 import { SetupWizard } from '@/pages/SetupWizard'
 import { Login } from '@/pages/Login'
 import { Landing } from '@/pages/Landing'
@@ -83,9 +87,12 @@ function AppRoutes() {
         <Route path="alerts/:id" element={<AlertDetail />} />
         <Route path="incidents" element={<Incidents />} />
         <Route path="incidents/:id" element={<IncidentDetail />} />
+        <Route path="assets" element={<Assets />} />
         <Route path="mitre" element={<MitreCoverage />} />
         <Route path="hunting" element={<ThreatHunting />} />
         <Route path="playbooks" element={<Playbooks />} />
+        <Route path="detection-rules" element={<DetectionRules />} />
+        <Route path="resilience" element={<Resilience />} />
         <Route path="reports" element={<Reports />} />
         <Route path="help" element={<Help />} />
         <Route
@@ -122,7 +129,28 @@ function AppRoutes() {
 
 function AppToaster() {
   const { theme } = useTheme()
-  return <Toaster richColors position="top-right" theme={theme} />
+  const { toasts } = useSonner()
+  const hasActiveToasts = toasts.some((t) => !t.delete)
+
+  return (
+    <>
+      {hasActiveToasts && (
+        <div className="fixed top-[68px] right-4 z-[120] pointer-events-none">
+          <button
+            type="button"
+            onClick={() => toast.dismiss()}
+            className="pointer-events-auto inline-flex items-center gap-1 rounded-md border border-border bg-card/95 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-md hover:text-foreground hover:bg-accent transition-colors"
+            title="Clear all popups"
+            aria-label="Clear all popups"
+          >
+            <X className="h-3 w-3" />
+            Clear all
+          </button>
+        </div>
+      )}
+      <Toaster richColors position="top-right" theme={theme} closeButton offset={104} />
+    </>
+  )
 }
 
 export default function App() {

@@ -8,9 +8,11 @@ module.exports = {
     sourceType: 'module',
     ecmaFeatures: { jsx: true },
   },
-  plugins: ['@typescript-eslint', 'security', 'no-unsanitized'],
+  plugins: ['@typescript-eslint', 'security', 'no-unsanitized', 'react-hooks'],
   extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
   rules: {
+    'react-hooks/rules-of-hooks': 'error',
+    'react-hooks/exhaustive-deps': 'warn',
     'no-eval': 'error',
     'no-implied-eval': 'error',
     'no-new-func': 'error',

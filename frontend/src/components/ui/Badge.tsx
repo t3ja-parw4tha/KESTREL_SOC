@@ -10,18 +10,18 @@ interface BadgeProps {
 }
 
 export function Badge({ severity, status, children, className }: BadgeProps) {
-  const label = children ?? (severity ? getSeverityLabel(severity) : status?.replace('_', ' ') ?? '')
+  const label = children ?? (severity ? getSeverityLabel(severity) : status?.replace(/_/g, ' ') ?? '')
   const styleClass = severity
     ? getSeverityColor(severity)
     : status
       ? getStatusColor(status)
-      : 'bg-soc-border text-soc-muted border-soc-border'
+      : 'bg-muted/50 text-muted-foreground border-border/50'
   const dotClass = severity ? getSeverityDot(severity) : null
 
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold border tracking-wide',
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border',
         styleClass,
         className
       )}

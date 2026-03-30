@@ -11,3 +11,4 @@ bandit>=1.7.0
 types-bleach>=6.1.0
 types-python-jose>=3.3.0
 types-passlib>=1.7.0
+types-PyYAML>=6.0.0

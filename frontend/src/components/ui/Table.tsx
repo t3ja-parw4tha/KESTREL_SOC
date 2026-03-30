@@ -7,22 +7,22 @@ interface TableProps {
 
 export function Table({ children, className }: TableProps) {
   return (
-    <div className={cn('overflow-x-auto rounded-2xl border border-soc-border', className)} style={{ boxShadow: 'var(--shadow-card)' }}>
-      <table className="w-full text-sm text-left text-soc-text">{children}</table>
+    <div className={cn('overflow-x-auto rounded-2xl border border-border', className)} style={{ boxShadow: 'var(--shadow-card)' }}>
+      <table className="w-full text-sm text-left text-foreground">{children}</table>
     </div>
   )
 }
 
 export function TableHead({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <thead className={cn('bg-soc-surface border-b border-soc-border text-soc-muted uppercase text-[11px] tracking-wider', className)}>
+    <thead className={cn('bg-card border-b border-border text-muted-foreground uppercase text-[11px] tracking-wider', className)}>
       {children}
     </thead>
   )
 }
 
 export function TableBody({ children }: { children: React.ReactNode }) {
-  return <tbody className="divide-y divide-soc-border/60">{children}</tbody>
+  return <tbody className="divide-y divide-border/60">{children}</tbody>
 }
 
 export function TableRow({
@@ -37,10 +37,10 @@ export function TableRow({
   return (
     <tr
       className={cn(
-        'bg-soc-surface transition-all duration-100 group',
+        'bg-card transition-all duration-100 group',
         onClick
           ? 'cursor-pointer hover:bg-blue-500/[0.04] dark:hover:bg-blue-500/[0.06]'
-          : 'hover:bg-soc-border/20',
+          : 'hover:bg-muted/20',
         className
       )}
       onClick={onClick}

@@ -15,55 +15,12 @@ from app.models import AuditLog
 from app.security.auth import verify_token, blocklist_check
 from app.security.exceptions import SecurityError
 
-# Current role permissions map (for audit/documentation):
-# analyst: [
-#     "alerts:read",
-#     "alerts:write",
-#     "alerts:update_status",
-#     "alerts:comment",
-#     "incidents:read",
-#     "ingest:write",
-#     "mitre:read",
-#     "ai:generate",
-#     "dashboard:read",
-# ]
-# senior_analyst: [
-#     "alerts:read",
-#     "alerts:write",
-#     "alerts:update_status",
-#     "alerts:comment",
-#     "alerts:assign",
-#     "incidents:read",
-#     "mitre:read",
-#     "ai:generate",
-#     "dashboard:read",
-#     "decisions:read",
-#     "decisions:run",
-#     "playbooks:run",
-#     "sources:read",
-# ]
-# admin: [
-#     "alerts:read",
-#     "alerts:write",
-#     "alerts:update_status",
-#     "alerts:comment",
-#     "alerts:assign",
-#     "alerts:delete",
-#     "incidents:read",
-#     "ingest:write",
-#     "mitre:read",
-#     "ai:generate",
-#     "dashboard:read",
-#     "decisions:read",
-#     "decisions:run",
-#     "playbooks:run",
-#     "sources:read",
-#     "sources:manage",
-#     "users:manage",
-#     "admin:write",
-#     "audit:read",
-#     "system:config",
-# ]
+# Current role permissions map (for audit/documentation).
+# Authoritative source: PERMISSIONS dict below.
+# Key additions in P6 hardening:
+#   - incidents:write added to analyst/senior_analyst/admin (create incidents from triage)
+#   - playbooks:run covers both execute and dry-run (simulation) operations
+#   - users:manage required for /auth/users/{id}/activity (admin-only audit view)
 
 # Role hierarchy: each role has its own permissions (senior includes analyst conceptually in UI).
 PERMISSIONS: dict[str, list[str]] = {
@@ -71,24 +28,39 @@ PERMISSIONS: dict[str, list[str]] = {
         # Read-only across the platform — no writes, no AI, no ingest.
         "dashboard:read",
         "alerts:read",
+        "assets:read",
         "incidents:read",
         "mitre:read",
+        "watchlist:read",
+        "cases:read",
     ],
     "analyst": [
         "alerts:read",
+        "assets:read",
+        "assets:write",
+        "evidence:write",
         "alerts:write",
         "alerts:update_status",
         "alerts:bulk_update",  # Bulk status/self-assign only
         "alerts:comment",
         "alerts:pick_up",   # Assign to self only (pick up unassigned alerts)
         "incidents:read",
+        "incidents:write",  # Create and update incidents from triage
         "ingest:write",
         "mitre:read",
         "ai:generate",
         "dashboard:read",
+        "dashboard:write",  # Custom layouts + scheduled reports (own team dashboards)
+        "watchlist:read",
+        "watchlist:write",
+        "cases:read",
+        "cases:write",
     ],
     "senior_analyst": [
         "alerts:read",
+        "assets:read",
+        "assets:write",
+        "evidence:write",
         "alerts:write",
         "alerts:update_status",
         "alerts:bulk_update",
@@ -96,16 +68,25 @@ PERMISSIONS: dict[str, list[str]] = {
         "alerts:pick_up",   # Can also pick up
         "alerts:assign",    # Can assign to others / reassign
         "incidents:read",
+        "incidents:write",
         "mitre:read",
         "ai:generate",
         "dashboard:read",
+        "dashboard:write",  # Create/manage scheduled reports and custom dashboards
         "decisions:read",
         "decisions:run",
-        "playbooks:run",
+        "playbooks:run",    # Run and dry-run playbooks
         "sources:read",
+        "watchlist:read",
+        "watchlist:write",
+        "cases:read",
+        "cases:write",
     ],
     "admin": [
         "alerts:read",
+        "assets:read",
+        "assets:write",
+        "evidence:write",
         "alerts:write",
         "alerts:update_status",
         "alerts:bulk_update",
@@ -114,19 +95,25 @@ PERMISSIONS: dict[str, list[str]] = {
         "alerts:assign",
         "alerts:delete",
         "incidents:read",
+        "incidents:write",
         "ingest:write",
         "mitre:read",
         "ai:generate",
         "dashboard:read",
+        "dashboard:write",  # Create/manage scheduled reports and custom dashboards
         "decisions:read",
         "decisions:run",
-        "playbooks:run",
+        "playbooks:run",    # Run and dry-run playbooks
         "sources:read",
         "sources:manage",
         "users:manage",
         "admin:write",
         "audit:read",
         "system:config",
+        "watchlist:read",
+        "watchlist:write",
+        "cases:read",
+        "cases:write",
     ],
 }
 

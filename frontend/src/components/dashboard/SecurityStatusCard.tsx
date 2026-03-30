@@ -39,9 +39,9 @@ function Row({
     <div className="flex items-center justify-between py-1.5 text-sm">
       <div className="flex items-center gap-2">
         <StatusDot status={status} />
-        <span className="text-soc-muted">{label}</span>
+        <span className="text-muted-foreground">{label}</span>
       </div>
-      {detail != null && <span className="text-soc-text tabular-nums">{detail}</span>}
+      {detail != null && <span className="text-foreground tabular-nums">{detail}</span>}
     </div>
   )
 }
@@ -52,7 +52,7 @@ export function SecurityStatusCard() {
   if (isLoading) {
     return (
       <Card className="flex items-center justify-center min-h-[200px]">
-        <Loader2 className="w-6 h-6 animate-spin text-soc-muted" />
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
       </Card>
     )
   }
@@ -61,19 +61,19 @@ export function SecurityStatusCard() {
     return (
       <Card>
         <CardHeader title="Security Status" />
-        <p className="text-sm text-soc-muted">Unable to load security status.</p>
+        <p className="text-sm text-muted-foreground">Unable to load security status.</p>
       </Card>
     )
   }
 
-  const d = data as unknown as SecurityStatusResponse
+  const d = data as SecurityStatusResponse
   return (
     <Card>
       <div className="flex items-center gap-2 mb-4">
-        <Shield className="w-4 h-4 text-soc-muted" />
-        <h3 className="text-sm font-semibold text-soc-text">Security Status</h3>
+        <Shield className="w-4 h-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold text-foreground">Security Status</h3>
       </div>
-      <div className="space-y-0 divide-y divide-soc-border/50">
+      <div className="space-y-0 divide-y divide-border/50">
         <Row
           label="Dependency audit"
           status={d.dependency_audit.status}

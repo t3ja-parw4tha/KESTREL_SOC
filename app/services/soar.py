@@ -1,11 +1,14 @@
 """SOAR Playbook Evaluation Engine."""
 
+from datetime import datetime, timezone
+
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import Alert, AlertSeverity, AlertStatus
 from app.models.playbook import Playbook
+from app.models.resilience import RunbookApprovalRequest
 from app.schemas.playbook import PlaybookAction, PlaybookCondition
 
 log = structlog.get_logger(__name__)
@@ -44,7 +47,65 @@ async def run_playbooks_for_alert(db: AsyncSession, alert: Alert) -> None:
         
         if match:
             log.info("playbook.matched", playbook_id=playbook.id, playbook_name=playbook.name, alert_id=alert.id)
-            _execute_actions(alert, actions, playbook.name)
+            risk_level = infer_playbook_risk_level(actions)
+            if risk_level == "high":
+                approved = (
+                    await db.execute(
+                        select(RunbookApprovalRequest).where(
+                            RunbookApprovalRequest.playbook_id == playbook.id,
+                            RunbookApprovalRequest.alert_id == alert.id,
+                            RunbookApprovalRequest.status.in_(["approved", "executed"]),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if not approved:
+                    pending = (
+                        await db.execute(
+                            select(RunbookApprovalRequest).where(
+                                RunbookApprovalRequest.playbook_id == playbook.id,
+                                RunbookApprovalRequest.alert_id == alert.id,
+                                RunbookApprovalRequest.status == "pending",
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if not pending:
+                        db.add(
+                            RunbookApprovalRequest(
+                                playbook_id=playbook.id,
+                                alert_id=alert.id,
+                                risk_level="high",
+                                status="pending",
+                                requested_by="system",
+                                action_summary=[a.model_dump() for a in actions],
+                                audit_trail=[
+                                    {
+                                        "event": "created",
+                                        "actor": "system",
+                                        "ts": datetime.now(timezone.utc).isoformat(),
+                                        "reason": "high-risk action requires approval",
+                                    }
+                                ],
+                            )
+                        )
+                    log.info(
+                        "playbook.approval_required",
+                        playbook_id=playbook.id,
+                        alert_id=alert.id,
+                    )
+                    continue
+            execute_playbook_actions(alert, [a.model_dump() for a in actions], playbook.name)
+
+
+def infer_playbook_risk_level(actions: list[PlaybookAction]) -> str:
+    """Classify a playbook action set as low/high risk for dual control."""
+    for action in actions:
+        action_type = str(action.type)
+        value = str(action.value).lower()
+        if action_type == "set_status" and value in {"resolved", "false_positive"}:
+            return "high"
+        if action_type == "set_severity" and value == "critical":
+            return "high"
+    return "low"
 
 
 def _evaluate_condition(alert: Alert, cond: PlaybookCondition) -> bool:
@@ -84,15 +145,16 @@ def _evaluate_condition(alert: Alert, cond: PlaybookCondition) -> bool:
     return False
 
 
-def _execute_actions(alert: Alert, actions: list[PlaybookAction], playbook_name: str) -> None:
+def execute_playbook_actions(alert: Alert, actions: list[dict], playbook_name: str) -> None:
     """Safely execute playbook actions on the alert object."""
     for action in actions:
         try:
-            val = action.value
-            if action.type == "set_severity":
+            action_type = str(action.get("type", ""))
+            val = str(action.get("value", ""))
+            if action_type == "set_severity":
                 # Ensure valid enum
                 alert.severity = AlertSeverity(val)
-            elif action.type == "set_status":
+            elif action_type == "set_status":
                 alert.status = AlertStatus(val)
                 if alert.status == AlertStatus.RESOLVED:
                     # Generic closing note if auto-resolved
@@ -100,12 +162,12 @@ def _execute_actions(alert: Alert, actions: list[PlaybookAction], playbook_name:
                         alert.ai_summary = f"Auto-resolved by playbook: {playbook_name}"
                     else:
                         alert.ai_summary += f"\n\nAuto-resolved by playbook: {playbook_name}"
-            elif action.type == "assign_to":
+            elif action_type == "assign_to":
                 alert.assigned_to = val
-            elif action.type == "add_tag":
+            elif action_type == "add_tag":
                 # KESTREL doesn't have a direct 'tags' column, but we can append it to the title or a generic field.
                 # Since tags aren't fully implemented in the schema, we'll prefix the title for now.
                 if f"[{val}]" not in alert.title:
                     alert.title = f"[{val}] {alert.title}"
         except ValueError as e:
-            log.warning("playbook.action_failed", action_type=action.type, value=action.value, error=str(e))
+            log.warning("playbook.action_failed", action_type=action_type, value=val, error=str(e))

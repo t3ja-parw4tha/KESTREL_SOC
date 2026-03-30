@@ -28,6 +28,10 @@ wheels/
 .installed.cfg
 *.egg
 
+# Sample / runtime evidence blobs (keep directory only)
+data/evidence/*
+!data/evidence/.gitkeep
+
 # Keys / secrets (never commit)
 data/keys/
 *.pem
@@ -35,6 +39,7 @@ data/keys/
 
 # Database
 *.db
+pytest_soc_platform.db
 *.sqlite
 *.sqlite3
 
@@ -70,6 +75,7 @@ logs/
 # Node
 node_modules/
 frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 
 # Frontend build output (never commit compiled assets)
 frontend/dist/

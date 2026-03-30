@@ -12,8 +12,8 @@ export function AIKeyFacts({ data, loading }: AIKeyFactsProps) {
       <ul className="space-y-2">
         {[1, 2, 3].map((i) => (
           <li key={i} className="flex gap-2 animate-pulse">
-            <div className="w-4 h-4 bg-soc-border rounded shrink-0 mt-0.5" />
-            <div className="h-4 bg-soc-border rounded flex-1" />
+            <div className="w-4 h-4 bg-muted rounded shrink-0 mt-0.5" />
+            <div className="h-4 bg-muted rounded flex-1" />
           </li>
         ))}
       </ul>
@@ -25,7 +25,7 @@ export function AIKeyFacts({ data, loading }: AIKeyFactsProps) {
   return (
     <ul className="space-y-2">
       {data.key_facts.map((fact, i) => (
-        <li key={i} className="flex gap-2 text-sm text-soc-text">
+        <li key={i} className="flex gap-2 text-sm text-foreground">
           <CheckCircle2 className="w-4 h-4 text-safe shrink-0 mt-0.5" />
           <span>{fact}</span>
         </li>

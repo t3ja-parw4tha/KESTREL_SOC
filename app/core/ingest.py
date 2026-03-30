@@ -6,9 +6,12 @@ Used by API ingest endpoint and by pull connectors (runner).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.alert_clustering import assign_alert_cluster
 from app.core.decision_engine.engine import run_decision_engine
 from app.core.decision_engine.types import DecisionInput
 from app.core.mitre.mapping import map_alert_to_techniques
@@ -18,6 +21,25 @@ from app.models.alert import AlertSeverity, AlertStatus
 from app.observability.metrics import ALERTS_INGESTED
 from app.security.sanitization import sanitize_log_data
 from app.services.soar import run_playbooks_for_alert
+
+DEDUP_WINDOW_MINUTES = 60  # Deduplicate within a 60-minute window
+
+
+async def _find_duplicate(db: AsyncSession, title: str, source: str) -> Alert | None:
+    """Return an existing open alert with the same title+source within the dedup window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=DEDUP_WINDOW_MINUTES)
+    r = await db.execute(
+        select(Alert)
+        .where(
+            Alert.title == title[:512],
+            Alert.source == source,
+            Alert.status.in_([AlertStatus.OPEN, AlertStatus.IN_PROGRESS]),
+            Alert.created_at >= cutoff,
+        )
+        .order_by(Alert.created_at.desc())
+        .limit(1)
+    )
+    return r.scalar_one_or_none()
 
 
 async def process_events(
@@ -54,6 +76,16 @@ async def process_events(
                 history=None,
             )
             decision_output = run_decision_engine(decision_input, recent_alerts=[])
+
+            # ── Deduplication ──────────────────────────────────────────────────
+            existing = await _find_duplicate(db, normalized.title[:512], normalized.source)
+            if existing is not None:
+                enrichment = dict(existing.enrichment or {})
+                enrichment["duplicate_count"] = enrichment.get("duplicate_count", 1) + 1
+                existing.enrichment = enrichment
+                await db.flush()
+                # Don't add to ingested_ids — no new alert created
+                continue
 
             alert_id = normalized.id or str(uuid.uuid4())
             try:
@@ -105,6 +137,16 @@ async def process_events(
                     engine_version=decision_output.engine_version,
                 )
             )
+
+            # Semantic clustering fallback: if decision engine did not group,
+            # try to attach to a recent, similar investigation cluster.
+            if not db_alert.incident_group_id:
+                cluster = await assign_alert_cluster(db, db_alert)
+                if cluster:
+                    db_alert.enrichment = {
+                        **(db_alert.enrichment or {}),
+                        "ai_cluster": cluster,
+                    }
 
             # Evaluate playbooks
             await run_playbooks_for_alert(db, db_alert)

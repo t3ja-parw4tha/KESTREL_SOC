@@ -1,6 +1,6 @@
 """Pydantic schemas for Automation Playbooks."""
 
-from typing import Any, Literal
+from typing import Literal
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,3 +50,29 @@ class PlaybookResponse(PlaybookBase):
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime | None
+
+
+class PlaybookTemplateResponse(BaseModel):
+    """Read-only representation of a built-in playbook template."""
+
+    key: str
+    name: str
+    description: str
+    trigger_type: str
+    conditions: list[PlaybookCondition]
+    actions: list[PlaybookAction]
+
+
+class InstallPlaybookLibraryRequest(BaseModel):
+    """Install one or more built-in templates into the playbooks table."""
+
+    template_keys: list[str] = Field(default_factory=list, min_length=1)
+    overwrite_existing: bool = False
+    activate: bool = True
+
+
+class InstallPlaybookLibraryResponse(BaseModel):
+    """Summary of library installation results."""
+
+    installed: list[str]
+    skipped: list[str]

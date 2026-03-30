@@ -9,9 +9,9 @@ export function AISummary({ data, loading }: AISummaryProps) {
   if (loading) {
     return (
       <div className="animate-pulse space-y-2">
-        <div className="h-4 bg-soc-border rounded w-3/4" />
-        <div className="h-4 bg-soc-border rounded w-full" />
-        <div className="h-4 bg-soc-border rounded w-5/6" />
+        <div className="h-4 bg-muted rounded w-3/4" />
+        <div className="h-4 bg-muted rounded w-full" />
+        <div className="h-4 bg-muted rounded w-5/6" />
       </div>
     )
   }
@@ -20,9 +20,9 @@ export function AISummary({ data, loading }: AISummaryProps) {
 
   return (
     <div className="space-y-4">
-      <p className="text-soc-text">{data.summary}</p>
+      <p className="text-foreground">{data.summary}</p>
       {data.confidence != null && (
-        <p className="text-sm text-soc-muted">Confidence: {Math.round(data.confidence * 100)}%</p>
+        <p className="text-sm text-muted-foreground">Confidence: {Math.round(data.confidence * 100)}%</p>
       )}
     </div>
   )

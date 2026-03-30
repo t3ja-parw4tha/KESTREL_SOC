@@ -59,6 +59,7 @@ dev = [
     "ruff==0.15.4",
     "mypy==1.19.1",
     "types-bleach>=6.1.0",
+    "types-PyYAML>=6.0.0",
 
 ]
 
@@ -66,9 +67,16 @@ dev = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+[tool.coverage.run]
+omit = [
+    "app/connectors/*",
+    "app/ai/*",
+]
+
 [tool.mypy]
 python_version = "3.11"
-ignore_missing_imports = false
+# Optional integrations (boto3, google.*, ldap3, …) are not always installed in dev/CI.
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [

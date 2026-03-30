@@ -23,8 +23,8 @@ export function ProtectedRoute({ children, allowedRoles = [] }: ProtectedRoutePr
   // Wait until AuthProvider has checked sessionStorage before deciding.
   if (!hydrated) {
     return (
-      <div className="min-h-screen bg-soc-bg flex items-center justify-center">
-        <div className="text-soc-muted">Loading...</div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     )
   }

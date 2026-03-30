@@ -1,3 +1,47 @@
+// SLA thresholds in hours per severity
+const SLA_HOURS: Record<string, number> = {
+  Critical: 1,
+  High: 4,
+  Medium: 24,
+  Low: 72,
+}
+
+export interface SlaStatus {
+  breached: boolean
+  /** Remaining time string like "2h 30m" or "Breached 1h ago" */
+  label: string
+  /** Elapsed hours */
+  elapsedHours: number
+  /** SLA threshold hours */
+  thresholdHours: number
+}
+
+export function getSlaStatus(createdAt: string, severity: string, status: string): SlaStatus | null {
+  // Only track SLA for open / in-progress alerts
+  if (status === 'resolved' || status === 'false_positive' || status === 'closed') return null
+
+  const threshold = SLA_HOURS[severity] ?? 24
+  const created = new Date(createdAt)
+  const now = new Date()
+  const elapsedMs = now.getTime() - created.getTime()
+  const elapsedHours = elapsedMs / (1000 * 60 * 60)
+  const remainingMs = threshold * 60 * 60 * 1000 - elapsedMs
+  const breached = elapsedHours > threshold
+
+  let label: string
+  if (breached) {
+    const overHours = Math.floor(elapsedHours - threshold)
+    const overMins = Math.floor(((elapsedHours - threshold) * 60) % 60)
+    label = overHours > 0 ? `+${overHours}h ${overMins}m` : `+${overMins}m`
+  } else {
+    const remHours = Math.floor(remainingMs / (1000 * 60 * 60))
+    const remMins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60))
+    label = remHours > 0 ? `${remHours}h ${remMins}m` : `${remMins}m`
+  }
+
+  return { breached, label, elapsedHours, thresholdHours: threshold }
+}
+
 /** Format a Date as YYYY-MM-DD for use in <input type="date"> */
 export function toDateInput(d: Date): string {
   return d.toISOString().slice(0, 10)

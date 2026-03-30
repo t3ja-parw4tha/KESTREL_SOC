@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from '@tanstack/react-query'
 import { Shield, Target, Grid3X3, AlertTriangle } from "lucide-react";
+import { get } from '@/api/client'
 
 interface Technique {
   id: string;
@@ -15,6 +17,20 @@ interface Technique {
 interface Tactic {
   name: string;
   techniques: Technique[];
+}
+
+interface LiveCoverageEntry {
+  technique_id: string;
+  technique_name: string;
+  tactic: string;
+  alert_count: number;
+  max_severity: string;
+  max_risk_score: number;
+}
+
+interface LiveCoverageResponse {
+  coverage: LiveCoverageEntry[];
+  total_techniques: number;
 }
 
 const mitreTactics: Tactic[] = [
@@ -127,10 +143,8 @@ const mitreTactics: Tactic[] = [
   },
 ];
 
-const totalTechniques = mitreTactics.reduce((s, t) => s + t.techniques.length, 0);
-const detectedTechniques = mitreTactics.reduce((s, t) => s + t.techniques.filter((x) => x.detected).length, 0);
-const coveragePct = Math.round((detectedTechniques / totalTechniques) * 100);
-const tacticsWithDetection = mitreTactics.filter((t) => t.techniques.some((x) => x.detected)).length;
+// Static totals used as fallback baseline
+const staticTotalTechniques = mitreTactics.reduce((s, t) => s + t.techniques.length, 0);
 
 const severityBg: Record<string, string> = {
   critical: "bg-red-500/20 border-red-500/40 text-red-400",
@@ -152,7 +166,48 @@ const MitreCoverage = () => {
   const [selectedTechnique, setSelectedTechnique] = useState<Technique | null>(null);
   const [selectedTactic, setSelectedTactic] = useState<string>("");
 
-  const gaps = mitreTactics
+  // Live coverage query — silently falls back to static data on error
+  const { data: liveCoverageData } = useQuery({
+    queryKey: ['mitre-live-coverage'],
+    queryFn: () => get<LiveCoverageResponse>('/mitre/coverage'),
+    retry: 1,
+  });
+
+  const { data: sourceQuality } = useQuery({
+    queryKey: ['mitre-source-quality'],
+    queryFn: () => get<{ items: Array<{ source: string; quality_score: number; techniques_detected: number; blind_spots: string[] }> }>('/resilience/mitre/source-quality'),
+  })
+
+  // Build a lookup map from the live coverage response
+  const liveCoverageMap = useMemo<Record<string, LiveCoverageEntry>>(() => {
+    if (!liveCoverageData?.coverage) return {};
+    return Object.fromEntries(liveCoverageData.coverage.map((e) => [e.technique_id, e]));
+  }, [liveCoverageData]);
+
+  // Merge live data over static fallback data
+  const mergedTactics = useMemo<Tactic[]>(() => {
+    if (Object.keys(liveCoverageMap).length === 0) return mitreTactics;
+    return mitreTactics.map((tactic) => ({
+      ...tactic,
+      techniques: tactic.techniques.map((tech) => {
+        const live = liveCoverageMap[tech.id];
+        if (!live) return tech;
+        return {
+          ...tech,
+          detected: live.alert_count > 0,
+          alertCount: live.alert_count,
+          severity: (live.max_severity as Technique["severity"]) ?? tech.severity,
+        };
+      }),
+    }));
+  }, [liveCoverageMap]);
+
+  const totalTechniques = staticTotalTechniques;
+  const detectedTechniques = mergedTactics.reduce((s, t) => s + t.techniques.filter((x) => x.detected).length, 0);
+  const coveragePct = Math.round((detectedTechniques / totalTechniques) * 100);
+  const tacticsWithDetection = mergedTactics.filter((t) => t.techniques.some((x) => x.detected)).length;
+
+  const gaps = mergedTactics
     .flatMap((t) => t.techniques.filter((x) => !x.detected).map((x) => ({ ...x, tactic: t.name })))
     .slice(0, 10);
 
@@ -202,10 +257,10 @@ const MitreCoverage = () => {
         <div className="overflow-x-auto">
           <div
             className="grid gap-1"
-            style={{ gridTemplateColumns: `repeat(${mitreTactics.length}, minmax(90px, 1fr))` }}
+            style={{ gridTemplateColumns: `repeat(${mergedTactics.length}, minmax(90px, 1fr))` }}
           >
             {/* Tactic Headers */}
-            {mitreTactics.map((tactic) => {
+            {mergedTactics.map((tactic) => {
               const detected = tactic.techniques.filter((t) => t.detected).length;
               return (
                 <div key={tactic.name} className="text-center pb-2 border-b border-border/30">
@@ -215,8 +270,8 @@ const MitreCoverage = () => {
               );
             })}
             {/* Technique Cells - row by row */}
-            {Array.from({ length: Math.max(...mitreTactics.map((t) => t.techniques.length)) }).map((_, rowIdx) => (
-              mitreTactics.map((tactic) => {
+            {Array.from({ length: Math.max(...mergedTactics.map((t) => t.techniques.length)) }).map((_, rowIdx) => (
+              mergedTactics.map((tactic) => {
                 const tech = tactic.techniques[rowIdx];
                 if (!tech) return <div key={`${tactic.name}-${rowIdx}`} />;
                 const sev = tech.severity ?? "low";
@@ -257,6 +312,27 @@ const MitreCoverage = () => {
               <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">No detections</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="glass-card rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3">Source Quality by ATT&CK Coverage</h2>
+        <div className="space-y-2">
+          {(sourceQuality?.items ?? []).slice(0, 8).map((item) => (
+            <div key={item.source} className="rounded-lg border border-border/40 bg-muted/20 p-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{item.source}</span>
+                <span className="text-blue-400">{item.quality_score}%</span>
+              </div>
+              <p className="text-muted-foreground mt-1">Techniques detected: {item.techniques_detected}</p>
+              {item.blind_spots.length > 0 && (
+                <p className="text-muted-foreground">Blind spots: {item.blind_spots.join(', ')}</p>
+              )}
+            </div>
+          ))}
+          {(sourceQuality?.items ?? []).length === 0 && (
+            <p className="text-xs text-muted-foreground">No source quality telemetry yet.</p>
+          )}
         </div>
       </div>
 

@@ -1,0 +1,276 @@
+name: DAST And API Security
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  api-security-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install app dependencies
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Start API server
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health > /dev/null; then
+              echo "API is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          cat uvicorn.log
+          exit 1
+
+      - name: API authz and malformed-input checks
+        run: |
+          set -euo pipefail
+
+          # --- Unauthenticated access must return 401 ---
+          for path in \
+            /api/v1/alerts \
+            /api/v1/incidents \
+            /api/v1/assets \
+            /api/v1/mitre/coverage \
+            /api/v1/hunting/queries \
+            /api/v1/auth/users; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000${path}")
+            [ "$STATUS" = "401" ] || (echo "FAIL: Expected 401 for ${path} unauthenticated, got ${STATUS}"; exit 1)
+            echo "OK: ${path} → 401 (unauthenticated)"
+          done
+
+          # --- Malformed JSON payload must return 400/401/422 ---
+          STATUS_BAD_JSON=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/api/v1/ingest \
+            -H "Content-Type: application/json" \
+            --data '{"source":')
+          case "$STATUS_BAD_JSON" in
+            400|401|422) echo "OK: Malformed payload handled with status: $STATUS_BAD_JSON" ;;
+            *) echo "FAIL: Unexpected status for malformed payload: $STATUS_BAD_JSON"; exit 1 ;;
+          esac
+
+          # --- Ensure admin exists and run authenticated boundary checks (fail-closed) ---
+          SETUP_DONE=$(curl -s http://127.0.0.1:8000/api/v1/auth/setup-status | python3 -c "import sys,json; print('1' if json.load(sys.stdin).get('setup_complete') else '0')")
+          if [ "$SETUP_DONE" = "0" ]; then
+            echo "Creating first-time admin for security smoke checks"
+            STATUS_SETUP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/api/v1/auth/setup \
+              -H "Content-Type: application/json" \
+              --data '{"username":"admin","password":"ChangeMe!12345"}')
+            [ "$STATUS_SETUP" = "200" ] || (echo "FAIL: Could not create setup admin, status=$STATUS_SETUP"; exit 1)
+          fi
+
+          ADMIN_TOKEN_RESP=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            --data '{"username":"admin","password":"ChangeMe!12345"}' 2>/dev/null || echo '{}')
+          ADMIN_TOKEN=$(echo "$ADMIN_TOKEN_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+          [ -n "$ADMIN_TOKEN" ] && [ "$ADMIN_TOKEN" != "null" ] || (echo "FAIL: Admin login/token acquisition failed"; exit 1)
+
+          # Admin can list users
+          STATUS_USERS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            http://127.0.0.1:8000/api/v1/auth/users)
+          [ "$STATUS_USERS" = "200" ] || (echo "FAIL: Admin /auth/users returned $STATUS_USERS"; exit 1)
+
+          # Attempt privilege escalation: crafted unsigned JWT must be rejected
+          FAKE_TOKEN="eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiI5OTk5Iiwicm9sZSI6ImFkbWluIn0."
+          STATUS_FAKE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $FAKE_TOKEN" \
+            http://127.0.0.1:8000/api/v1/auth/users)
+          [ "$STATUS_FAKE" = "401" ] || (echo "FAIL: Unsigned JWT not rejected, got $STATUS_FAKE"; exit 1)
+          echo "OK: Unsigned 'alg:none' JWT rejected with 401"
+
+          # Create server-side CSRF session token, then verify mutation without header is blocked
+          CSRF_RESP=$(curl -s -c cookies.txt -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            http://127.0.0.1:8000/api/v1/auth/csrf-token)
+          CSRF_TOKEN=$(echo "$CSRF_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('csrf_token',''))" 2>/dev/null || echo "")
+          [ -n "$CSRF_TOKEN" ] && [ "$CSRF_TOKEN" != "null" ] || (echo "FAIL: Failed to seed CSRF session token"; exit 1)
+
+          STATUS_NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"alert_ids":["test"]}' \
+            http://127.0.0.1:8000/api/v1/incidents)
+          [ "$STATUS_NO_CSRF" = "403" ] || (echo "FAIL: Expected 403 for POST without CSRF, got $STATUS_NO_CSRF"; exit 1)
+          echo "OK: CSRF check on POST /incidents → $STATUS_NO_CSRF"
+
+          # Authenticated admin workflow checks on high-risk routes (CV-6)
+          STATUS_USERS_ACTIVITY=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            http://127.0.0.1:8000/api/v1/auth/users/1/activity)
+          case "$STATUS_USERS_ACTIVITY" in
+            200|404) echo "OK: /auth/users/{id}/activity reachable with admin token ($STATUS_USERS_ACTIVITY)" ;;
+            *) echo "FAIL: Unexpected status for admin activity route: $STATUS_USERS_ACTIVITY"; exit 1 ;;
+          esac
+
+          STATUS_RULES_NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"cv6-rule","rule_type":"custom","conditions":[{"field":"source","operator":"eq","value":"api"}],"severity":"medium"}' \
+            http://127.0.0.1:8000/api/v1/detection-rules)
+          [ "$STATUS_RULES_NO_CSRF" = "403" ] || (echo "FAIL: Expected 403 for /detection-rules POST without CSRF, got $STATUS_RULES_NO_CSRF"; exit 1)
+
+          STATUS_RULES_WITH_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "X-CSRF-Token: $CSRF_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"cv6-rule","rule_type":"custom","conditions":[{"field":"source","operator":"eq","value":"api"}],"severity":"medium"}' \
+            http://127.0.0.1:8000/api/v1/detection-rules)
+          case "$STATUS_RULES_WITH_CSRF" in
+            200|201|409|422) echo "OK: /detection-rules POST with CSRF handled ($STATUS_RULES_WITH_CSRF)" ;;
+            *) echo "FAIL: Unexpected /detection-rules with CSRF status $STATUS_RULES_WITH_CSRF"; exit 1 ;;
+          esac
+
+          STATUS_DRILL_NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"target":"cv6-primary-db","rpo_target_minutes":60,"rto_target_minutes":120}' \
+            http://127.0.0.1:8000/api/v1/resilience/dr/drills)
+          [ "$STATUS_DRILL_NO_CSRF" = "403" ] || (echo "FAIL: Expected 403 for /resilience/dr/drills POST without CSRF, got $STATUS_DRILL_NO_CSRF"; exit 1)
+
+          STATUS_DRILL_WITH_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "X-CSRF-Token: $CSRF_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"target":"cv6-primary-db","rpo_target_minutes":60,"rto_target_minutes":120}' \
+            http://127.0.0.1:8000/api/v1/resilience/dr/drills)
+          case "$STATUS_DRILL_WITH_CSRF" in
+            200|201|409|422) echo "OK: /resilience/dr/drills POST with CSRF handled ($STATUS_DRILL_WITH_CSRF)" ;;
+            *) echo "FAIL: Unexpected /resilience/dr/drills with CSRF status $STATUS_DRILL_WITH_CSRF"; exit 1 ;;
+          esac
+
+          STATUS_SECRETS_NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"secret_name":"cv6-secret","provider":"env","rotation_days":90}' \
+            http://127.0.0.1:8000/api/v1/resilience/secrets/policies)
+          [ "$STATUS_SECRETS_NO_CSRF" = "403" ] || (echo "FAIL: Expected 403 for /resilience/secrets/policies POST without CSRF, got $STATUS_SECRETS_NO_CSRF"; exit 1)
+
+          STATUS_SECRETS_WITH_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "X-CSRF-Token: $CSRF_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"secret_name":"cv6-secret","provider":"env","rotation_days":90}' \
+            http://127.0.0.1:8000/api/v1/resilience/secrets/policies)
+          case "$STATUS_SECRETS_WITH_CSRF" in
+            200|201|409|422) echo "OK: /resilience/secrets/policies POST with CSRF handled ($STATUS_SECRETS_WITH_CSRF)" ;;
+            *) echo "FAIL: Unexpected /resilience/secrets/policies with CSRF status $STATUS_SECRETS_WITH_CSRF"; exit 1 ;;
+          esac
+
+          STATUS_REPORTS_NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"cv6-weekly","framework":"soc2","cadence":"weekly","delivery_format":"pdf","recipients":["soc@example.com"]}' \
+            http://127.0.0.1:8000/api/v1/scheduled-reports)
+          [ "$STATUS_REPORTS_NO_CSRF" = "403" ] || (echo "FAIL: Expected 403 for /scheduled-reports POST without CSRF, got $STATUS_REPORTS_NO_CSRF"; exit 1)
+
+          STATUS_REPORTS_WITH_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -b cookies.txt \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "X-CSRF-Token: $CSRF_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"cv6-weekly","framework":"soc2","cadence":"weekly","delivery_format":"pdf","recipients":["soc@example.com"]}' \
+            http://127.0.0.1:8000/api/v1/scheduled-reports)
+          case "$STATUS_REPORTS_WITH_CSRF" in
+            200|201|409|422) echo "OK: /scheduled-reports POST with CSRF handled ($STATUS_REPORTS_WITH_CSRF)" ;;
+            *) echo "FAIL: Unexpected /scheduled-reports with CSRF status $STATUS_REPORTS_WITH_CSRF"; exit 1 ;;
+          esac
+
+          # --- SQL injection probe: query param injection must not cause 500 ---
+          STATUS_SQLI=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://127.0.0.1:8000/api/v1/alerts?search=%27%3BDROP%20TABLE%20alerts%3B--")
+          [ "$STATUS_SQLI" = "401" ] || [ "$STATUS_SQLI" = "422" ] || (echo "FAIL: SQL injection probe returned unexpected status $STATUS_SQLI (expected 401)"; exit 1)
+          echo "OK: SQL injection probe → $STATUS_SQLI (no 500 server error)"
+
+          echo "All API security smoke checks passed."
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-security-smoke-logs
+          path: uvicorn.log
+          if-no-files-found: warn
+
+  dast-zap-baseline:
+    runs-on: ubuntu-latest
+    needs: [api-security-smoke]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install app dependencies
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Start API server
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health > /dev/null; then
+              echo "API is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          cat uvicorn.log
+          exit 1
+
+      - name: OWASP ZAP baseline scan
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${PWD}:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:8000 \
+            -m 5 \
+            -J /zap/wrk/zap-report.json \
+            -r /zap/wrk/zap-report.html
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            zap-report.json
+            zap-report.html
+            uvicorn.log
+          if-no-files-found: warn

@@ -42,14 +42,32 @@ export interface IocGroup {
   cves: string[]
 }
 
+export interface FpClassifier {
+  score: number
+  candidate: boolean
+  label: string
+  reasons: string[]
+}
+
 export interface Enrichment {
   /** Structured IOC groups written by the backend enrichment pipeline. */
-  iocs: IocGroup
-  vt_results: VTResult[]
-  abuse_results: AbuseResult[]
-  feed_matches: FeedMatch[]
-  risk_modifier: number
-  summary: string
+  iocs?: IocGroup
+  vt_results?: VTResult[]
+  abuse_results?: AbuseResult[]
+  feed_matches?: FeedMatch[]
+  risk_modifier?: number
+  summary?: string
+  /** Number of duplicate events collapsed into this alert. */
+  duplicate_count?: number
+  /** Tags applied by playbook suppression rules. */
+  playbook_tags?: string[]
+  /** False-positive classifier result from enrichment pipeline. */
+  fp_classifier?: FpClassifier
+  /** Semantic cluster ID assigned during ingest (ai_cluster). */
+  ai_cluster?: string
+  /** IOC watchlist tags matched during enrichment. */
+  watchlist_tags?: string[]
+  watchlist_matches?: unknown[]
 }
 
 export type AlertStatus =
@@ -74,6 +92,8 @@ export interface Alert {
   risk_score: number | null
   risk_level: string | null
   confidence: number | null
+  false_positive_score?: number | null
+  false_positive_candidate?: boolean
   incident_group_id: string | null
   ai_summary: string | null
   ai_key_facts: Record<string, unknown> | null
@@ -112,4 +132,7 @@ export interface AlertFiltersParams {
   date_to?: string
   page?: number
   limit?: number
+  sort_by?: 'severity' | 'risk_score' | 'created_at'
+  sort_dir?: 'asc' | 'desc'
+  false_positive_candidate?: boolean
 }

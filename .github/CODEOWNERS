@@ -1,0 +1,16 @@
+# Global default owner
+* @t3ja-parw4tha
+
+# Security-critical paths require explicit owner review
+.github/workflows/ @t3ja-parw4tha
+.github/dependabot.yml @t3ja-parw4tha
+.github/CODEOWNERS @t3ja-parw4tha
+app/security/ @t3ja-parw4tha
+app/api/auth.py @t3ja-parw4tha
+app/api/sso.py @t3ja-parw4tha
+app/core/ @t3ja-parw4tha
+app/models/ @t3ja-parw4tha
+requirements*.txt @t3ja-parw4tha
+requirements/ @t3ja-parw4tha
+docker/ @t3ja-parw4tha
+frontend/src/security/ @t3ja-parw4tha

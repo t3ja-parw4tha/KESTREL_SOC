@@ -147,10 +147,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # --- 4. Rate limiting middleware ---
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        from app.config import get_settings
         from app.models import RateLimitBucket, RateLimitViolation
         from app.database import SessionLocal
         from sqlalchemy import select, delete
         from datetime import timedelta
+
+        if not get_settings().rate_limit_enabled:
+            return await call_next(request)
 
         real_ip = get_real_ip(request)
         path = request.url.path or ""
@@ -247,15 +251,21 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
         if request.method in ("POST", "PATCH", "PUT"):
             content_length_raw = request.headers.get("Content-Length", "0")
             content_length = int(content_length_raw) if content_length_raw.isdigit() else 0
+            media_type = content_type.split(";")[0].strip().lower() if content_type else ""
+            allowed_body_types = {
+                "application/json",
+                "multipart/form-data",
+                "application/x-www-form-urlencoded",
+            }
             # Only enforce Content-Type when the request actually carries a body.
             # Bodyless POSTs (e.g. /settings/test/{source}, /auth/logout) must not be blocked.
             if content_length > 0 and (
-                not content_type
-                or "application/json" not in content_type.split(";")[0].strip().lower()
+                not media_type
+                or media_type not in allowed_body_types
             ):
                 return Response(
                     status_code=415,
-                    content=json.dumps({"detail": "Content-Type must be application/json"}),
+                    content=json.dumps({"detail": "Unsupported Content-Type for request body"}),
                 )
             if content_length > max_body:
                 return Response(status_code=413, content=json.dumps({"detail": "Request body too large"}))

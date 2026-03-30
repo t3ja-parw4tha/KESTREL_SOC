@@ -2,6 +2,7 @@ import { get, post, patch } from './client'
 
 export interface Incident {
   id: string
+  incident_id?: string
   title: string
   description: string
   severity: 'critical' | 'high' | 'medium' | 'low'
@@ -13,11 +14,46 @@ export interface Incident {
   mitre_tactics: string[]
 }
 
+export interface IncidentDetailAlert {
+  id: string
+  title: string
+  severity: string
+  risk_score: number | null
+  created_at: string | null
+  source: string | null
+}
+
+export interface IncidentDetail {
+  incident_id: string
+  title: string
+  description: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  status: 'open' | 'in_progress' | 'contained' | 'resolved' | 'closed'
+  assigned_to: string | null
+  alert_count: number
+  created_at: string | null
+  updated_at: string | null
+  mitre_tactics: string[]
+  alerts: IncidentDetailAlert[]
+  mitre_techniques: Array<{ technique_id: string; technique_name?: string; tactic?: string; phase?: string }>
+  attack_timeline: Array<{
+    alert_id?: string
+    title?: string
+    event?: string
+    time?: string
+    timestamp?: string
+    severity?: string
+    type?: string
+    actor?: string
+  }>
+  recommended_actions: string[]
+}
+
 export interface IncidentsResponse {
   items: Incident[]
   total: number
-  page: number
-  page_size: number
+  page?: number
+  page_size?: number
 }
 
 export interface IncidentFilters {
@@ -104,11 +140,38 @@ export const demoIncidents: Incident[] = [
   },
 ]
 
-export const incidentsApi = {
-  list: (filters?: IncidentFilters) =>
-    get<IncidentsResponse>('/incidents', { params: filters }),
+/** Normalise a raw list item from the backend (incident_id) to the Incident shape. */
+export function normaliseListItem(raw: Record<string, unknown>): Incident {
+  const id = (raw.incident_id as string) || (raw.id as string) || ''
+  return {
+    id,
+    incident_id: id,
+    title: (raw.title as string) || `Incident ${id}`,
+    description: (raw.description as string) || '',
+    severity: (['critical', 'high', 'medium', 'low'].includes(raw.severity as string)
+      ? raw.severity
+      : 'medium') as Incident['severity'],
+    status: (['open', 'in_progress', 'contained', 'resolved', 'closed'].includes(raw.status as string)
+      ? raw.status
+      : 'open') as Incident['status'],
+    assigned_to: (raw.assigned_to as string | null) ?? null,
+    alert_count: (raw.alert_count as number) || 0,
+    created_at: (raw.created_at as string) || new Date().toISOString(),
+    updated_at: (raw.updated_at as string) || new Date().toISOString(),
+    mitre_tactics: (raw.mitre_tactics as string[]) || [],
+  }
+}
 
-  get: (id: string) => get<Incident>(`/incidents/${id}`),
+export const incidentsApi = {
+  list: async (filters?: IncidentFilters): Promise<IncidentsResponse> => {
+    const raw = await get<{ items: Record<string, unknown>[]; total: number }>('/incidents', { params: filters })
+    return {
+      items: (raw.items || []).map(normaliseListItem),
+      total: raw.total || 0,
+    }
+  },
+
+  get: (id: string) => get<IncidentDetail>(`/incidents/${id}`),
 
   create: (data: Partial<Incident>) =>
     post<Incident>('/incidents', data),

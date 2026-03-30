@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/security/AuthContext'
 import {
   Sparkles,
@@ -24,13 +25,17 @@ import {
   Ticket,
   Monitor,
   Wifi,
+  Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/utils/cn'
 import { SetupGuideModal } from '@/components/sources/SetupGuideModal'
-import { get, post, del } from '@/api/client'
+import { get, post, del, patch } from '@/api/client'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { SOURCE_CATALOG } from '@/data/sourcesCatalog'
+import { SourceLogo } from '@/components/sources/SourceLogo'
 
-type Tab = 'ai' | 'sources' | 'notifications' | 'users'
+type Tab = 'ai' | 'sources' | 'notifications' | 'sso'
 
 interface SettingsData {
   settings: Record<string, string>
@@ -57,6 +62,7 @@ interface SourceDef {
 }
 
 const SOURCES: SourceDef[] = [
+  // ── SIEM / Log Management ──────────────────────────────────────────────────
   {
     id: 'sentinel',
     name: 'Microsoft Sentinel',
@@ -74,6 +80,51 @@ const SOURCES: SourceDef[] = [
     sensitiveKeys: new Set(['AZURE_CLIENT_SECRET']),
   },
   {
+    id: 'splunk',
+    name: 'Splunk',
+    type: 'SIEM',
+    description: 'Pull notable events via Splunk REST API',
+    keys: ['SPLUNK_HOST', 'SPLUNK_PORT', 'SPLUNK_TOKEN', 'SPLUNK_QUERY'],
+    testSource: 'splunk',
+    requiredKeys: ['SPLUNK_HOST', 'SPLUNK_TOKEN'],
+    keyLabels: {
+      SPLUNK_HOST: 'Host / IP',
+      SPLUNK_PORT: 'REST Port (default 8089)',
+      SPLUNK_TOKEN: 'Bearer Token',
+      SPLUNK_QUERY: 'Search Query',
+    },
+    sensitiveKeys: new Set(['SPLUNK_TOKEN']),
+  },
+  {
+    id: 'qradar',
+    name: 'IBM QRadar',
+    type: 'SIEM',
+    description: 'Pull open offenses from QRadar REST API',
+    keys: ['QRADAR_HOST', 'QRADAR_TOKEN'],
+    testSource: 'qradar',
+    requiredKeys: ['QRADAR_HOST', 'QRADAR_TOKEN'],
+    keyLabels: {
+      QRADAR_HOST: 'Console Host / IP',
+      QRADAR_TOKEN: 'SEC Token',
+    },
+    sensitiveKeys: new Set(['QRADAR_TOKEN']),
+  },
+  {
+    id: 'elastic-siem',
+    name: 'Elastic SIEM',
+    type: 'SIEM',
+    description: 'Pull security alerts from Elasticsearch',
+    keys: ['ELASTIC_HOST', 'ELASTIC_API_KEY'],
+    testSource: 'elastic-siem',
+    requiredKeys: ['ELASTIC_HOST', 'ELASTIC_API_KEY'],
+    keyLabels: {
+      ELASTIC_HOST: 'Elasticsearch URL',
+      ELASTIC_API_KEY: 'API Key (base64)',
+    },
+    sensitiveKeys: new Set(['ELASTIC_API_KEY']),
+  },
+  // ── Cloud Security ─────────────────────────────────────────────────────────
+  {
     id: 'guardduty',
     name: 'AWS GuardDuty',
     type: 'Cloud',
@@ -88,6 +139,283 @@ const SOURCES: SourceDef[] = [
     },
     sensitiveKeys: new Set(['AWS_SECRET_ACCESS_KEY']),
   },
+  {
+    id: 'aws-cloudtrail',
+    name: 'AWS CloudTrail',
+    type: 'Cloud',
+    description: 'Pull suspicious management events from CloudTrail',
+    keys: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'CLOUDTRAIL_TRAIL_NAME'],
+    testSource: 'aws-cloudtrail',
+    requiredKeys: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION'],
+    keyLabels: {
+      AWS_ACCESS_KEY_ID: 'Access Key ID',
+      AWS_SECRET_ACCESS_KEY: 'Secret Access Key',
+      AWS_REGION: 'Region',
+      CLOUDTRAIL_TRAIL_NAME: 'Trail Name (optional)',
+    },
+    sensitiveKeys: new Set(['AWS_SECRET_ACCESS_KEY']),
+  },
+  {
+    id: 'azure-defender',
+    name: 'Azure Defender',
+    type: 'Cloud',
+    description: 'Pull security alerts from Microsoft Defender for Cloud',
+    keys: ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_SUBSCRIPTION_ID'],
+    testSource: 'azure-defender',
+    requiredKeys: ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_SUBSCRIPTION_ID'],
+    keyLabels: {
+      AZURE_TENANT_ID: 'Tenant ID',
+      AZURE_CLIENT_ID: 'Client ID',
+      AZURE_CLIENT_SECRET: 'Client Secret',
+      AZURE_SUBSCRIPTION_ID: 'Subscription ID',
+    },
+    sensitiveKeys: new Set(['AZURE_CLIENT_SECRET']),
+  },
+  {
+    id: 'gcp-scc',
+    name: 'GCP Security Command Center',
+    type: 'Cloud',
+    description: 'Pull active findings from GCP Security Command Center',
+    keys: ['GCP_ORG_ID', 'GCP_SERVICE_ACCOUNT_KEY'],
+    testSource: 'gcp-scc',
+    requiredKeys: ['GCP_ORG_ID', 'GCP_SERVICE_ACCOUNT_KEY'],
+    keyLabels: {
+      GCP_ORG_ID: 'Organization ID',
+      GCP_SERVICE_ACCOUNT_KEY: 'Service Account Key JSON',
+    },
+    sensitiveKeys: new Set(['GCP_SERVICE_ACCOUNT_KEY']),
+  },
+  // ── EDR ───────────────────────────────────────────────────────────────────
+  {
+    id: 'crowdstrike',
+    name: 'CrowdStrike Falcon',
+    type: 'EDR',
+    description: 'Pull alerts from CrowdStrike Falcon via OAuth2 API',
+    keys: ['CROWDSTRIKE_CLIENT_ID', 'CROWDSTRIKE_CLIENT_SECRET', 'CROWDSTRIKE_BASE_URL'],
+    testSource: 'crowdstrike',
+    requiredKeys: ['CROWDSTRIKE_CLIENT_ID', 'CROWDSTRIKE_CLIENT_SECRET'],
+    keyLabels: {
+      CROWDSTRIKE_CLIENT_ID: 'Client ID',
+      CROWDSTRIKE_CLIENT_SECRET: 'Client Secret',
+      CROWDSTRIKE_BASE_URL: 'Base URL (optional)',
+    },
+    sensitiveKeys: new Set(['CROWDSTRIKE_CLIENT_SECRET']),
+  },
+  {
+    id: 'sentinelone',
+    name: 'SentinelOne',
+    type: 'EDR',
+    description: 'Pull threat detections from SentinelOne management console',
+    keys: ['S1_CONSOLE_URL', 'S1_API_TOKEN', 'S1_SITE_ID'],
+    testSource: 'sentinelone',
+    requiredKeys: ['S1_CONSOLE_URL', 'S1_API_TOKEN'],
+    keyLabels: {
+      S1_CONSOLE_URL: 'Console URL',
+      S1_API_TOKEN: 'API Token',
+      S1_SITE_ID: 'Site ID (optional)',
+    },
+    sensitiveKeys: new Set(['S1_API_TOKEN']),
+  },
+  {
+    id: 'carbonblack',
+    name: 'VMware Carbon Black',
+    type: 'EDR',
+    description: 'Pull alerts from Carbon Black Cloud',
+    keys: ['CBC_ORG_KEY', 'CBC_API_KEY', 'CBC_API_ID', 'CBC_BASE_URL'],
+    testSource: 'carbonblack',
+    requiredKeys: ['CBC_ORG_KEY', 'CBC_API_KEY', 'CBC_API_ID'],
+    keyLabels: {
+      CBC_ORG_KEY: 'Organization Key',
+      CBC_API_KEY: 'API Key',
+      CBC_API_ID: 'API ID',
+      CBC_BASE_URL: 'Base URL (optional)',
+    },
+    sensitiveKeys: new Set(['CBC_API_KEY']),
+  },
+  {
+    id: 'cortex-xdr',
+    name: 'Palo Alto Cortex XDR',
+    type: 'EDR',
+    description: 'Pull incidents from Cortex XDR REST API',
+    keys: ['CORTEX_API_KEY', 'CORTEX_API_KEY_ID', 'CORTEX_BASE_URL'],
+    testSource: 'cortex-xdr',
+    requiredKeys: ['CORTEX_API_KEY', 'CORTEX_API_KEY_ID', 'CORTEX_BASE_URL'],
+    keyLabels: {
+      CORTEX_API_KEY: 'API Key',
+      CORTEX_API_KEY_ID: 'API Key ID',
+      CORTEX_BASE_URL: 'Tenant URL',
+    },
+    sensitiveKeys: new Set(['CORTEX_API_KEY']),
+  },
+  {
+    id: 'defender',
+    name: 'Microsoft Defender',
+    type: 'EDR',
+    description: 'Push alerts from Microsoft Defender for Endpoint via agent',
+    keys: [],
+    testSource: null,
+    requiredKeys: [],
+    keyLabels: {},
+    sensitiveKeys: new Set(),
+    ingestSourceName: 'Defender',
+  },
+  // ── Identity ──────────────────────────────────────────────────────────────
+  {
+    id: 'azure-ad',
+    name: 'Azure Active Directory',
+    type: 'Cloud',
+    description: 'Pull risky sign-ins and risk detections from Entra ID',
+    keys: ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'],
+    testSource: 'azure-ad',
+    requiredKeys: ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'],
+    keyLabels: {
+      AZURE_TENANT_ID: 'Tenant ID',
+      AZURE_CLIENT_ID: 'Client ID',
+      AZURE_CLIENT_SECRET: 'Client Secret',
+    },
+    sensitiveKeys: new Set(['AZURE_CLIENT_SECRET']),
+  },
+  {
+    id: 'microsoft-365',
+    name: 'Microsoft 365 Defender',
+    type: 'SIEM',
+    description: 'Pull incidents from Microsoft 365 Defender via Graph Security API',
+    keys: ['M365_TENANT_ID', 'M365_CLIENT_ID', 'M365_CLIENT_SECRET'],
+    testSource: 'microsoft-365',
+    requiredKeys: ['M365_TENANT_ID', 'M365_CLIENT_ID', 'M365_CLIENT_SECRET'],
+    keyLabels: {
+      M365_TENANT_ID: 'Tenant ID',
+      M365_CLIENT_ID: 'Client ID',
+      M365_CLIENT_SECRET: 'Client Secret',
+    },
+    sensitiveKeys: new Set(['M365_CLIENT_SECRET']),
+  },
+  {
+    id: 'okta',
+    name: 'Okta',
+    type: 'Cloud',
+    description: 'Pull security events from Okta System Log',
+    keys: ['OKTA_DOMAIN', 'OKTA_API_TOKEN'],
+    testSource: 'okta',
+    requiredKeys: ['OKTA_DOMAIN', 'OKTA_API_TOKEN'],
+    keyLabels: {
+      OKTA_DOMAIN: 'Okta Domain (e.g. company.okta.com)',
+      OKTA_API_TOKEN: 'API Token',
+    },
+    sensitiveKeys: new Set(['OKTA_API_TOKEN']),
+  },
+  {
+    id: 'google-workspace',
+    name: 'Google Workspace',
+    type: 'Cloud',
+    description: 'Pull login and admin activity from Google Workspace',
+    keys: ['GWORKSPACE_SERVICE_ACCOUNT_KEY', 'GWORKSPACE_ADMIN_EMAIL'],
+    testSource: 'google-workspace',
+    requiredKeys: ['GWORKSPACE_SERVICE_ACCOUNT_KEY', 'GWORKSPACE_ADMIN_EMAIL'],
+    keyLabels: {
+      GWORKSPACE_SERVICE_ACCOUNT_KEY: 'Service Account Key JSON',
+      GWORKSPACE_ADMIN_EMAIL: 'Admin Email',
+    },
+    sensitiveKeys: new Set(['GWORKSPACE_SERVICE_ACCOUNT_KEY']),
+  },
+  // ── Network / Firewall ────────────────────────────────────────────────────
+  {
+    id: 'palo-alto',
+    name: 'Palo Alto NGFW',
+    type: 'IDS/IPS',
+    description: 'Pull threat logs from PAN-OS via XML API',
+    keys: ['PANOS_HOST', 'PANOS_API_KEY', 'PANOS_VSYS'],
+    testSource: 'palo-alto',
+    requiredKeys: ['PANOS_HOST', 'PANOS_API_KEY'],
+    keyLabels: {
+      PANOS_HOST: 'Firewall Host / IP',
+      PANOS_API_KEY: 'API Key',
+      PANOS_VSYS: 'Virtual System (default vsys1)',
+    },
+    sensitiveKeys: new Set(['PANOS_API_KEY']),
+  },
+  {
+    id: 'fortinet',
+    name: 'Fortinet FortiGate',
+    type: 'IDS/IPS',
+    description: 'Pull threat logs from FortiGate via REST API',
+    keys: ['FORTIGATE_HOST', 'FORTIGATE_API_KEY', 'FORTIGATE_VDOM'],
+    testSource: 'fortinet',
+    requiredKeys: ['FORTIGATE_HOST', 'FORTIGATE_API_KEY'],
+    keyLabels: {
+      FORTIGATE_HOST: 'FortiGate Host / IP',
+      FORTIGATE_API_KEY: 'API Key',
+      FORTIGATE_VDOM: 'VDOM (default root)',
+    },
+    sensitiveKeys: new Set(['FORTIGATE_API_KEY']),
+  },
+  {
+    id: 'suricata',
+    name: 'Suricata IDS',
+    type: 'IDS/IPS',
+    description: 'Network IDS — push logs via ingest API or EVE JSON path',
+    keys: ['SURICATA_EVE_PATH'],
+    testSource: null,
+    requiredKeys: ['SURICATA_EVE_PATH'],
+    keyLabels: { SURICATA_EVE_PATH: 'EVE JSON Path' },
+    sensitiveKeys: new Set(),
+    ingestSourceName: 'Suricata',
+  },
+  {
+    id: 'snort',
+    name: 'Snort',
+    type: 'IDS/IPS',
+    description: 'Network IDS/IPS — push logs via ingest API',
+    keys: [],
+    testSource: null,
+    requiredKeys: [],
+    keyLabels: {},
+    sensitiveKeys: new Set(),
+    ingestSourceName: 'Snort',
+  },
+  {
+    id: 'zeek',
+    name: 'Zeek',
+    type: 'IDS/IPS',
+    description: 'Network monitoring — push logs via ingest API',
+    keys: [],
+    testSource: null,
+    requiredKeys: [],
+    keyLabels: {},
+    sensitiveKeys: new Set(),
+    ingestSourceName: 'Zeek',
+  },
+  // ── Vulnerability Management ───────────────────────────────────────────────
+  {
+    id: 'tenable',
+    name: 'Tenable.io',
+    type: 'Cloud',
+    description: 'Pull vulnerability findings from Tenable.io',
+    keys: ['TENABLE_ACCESS_KEY', 'TENABLE_SECRET_KEY'],
+    testSource: 'tenable',
+    requiredKeys: ['TENABLE_ACCESS_KEY', 'TENABLE_SECRET_KEY'],
+    keyLabels: {
+      TENABLE_ACCESS_KEY: 'Access Key',
+      TENABLE_SECRET_KEY: 'Secret Key',
+    },
+    sensitiveKeys: new Set(['TENABLE_ACCESS_KEY', 'TENABLE_SECRET_KEY']),
+  },
+  {
+    id: 'qualys',
+    name: 'Qualys VMDR',
+    type: 'Cloud',
+    description: 'Pull vulnerability detections from Qualys VMDR',
+    keys: ['QUALYS_API_URL', 'QUALYS_USERNAME', 'QUALYS_PASSWORD'],
+    testSource: 'qualys',
+    requiredKeys: ['QUALYS_USERNAME', 'QUALYS_PASSWORD'],
+    keyLabels: {
+      QUALYS_API_URL: 'API URL (optional)',
+      QUALYS_USERNAME: 'Username',
+      QUALYS_PASSWORD: 'Password',
+    },
+    sensitiveKeys: new Set(['QUALYS_PASSWORD']),
+  },
+  // ── Enrichment ────────────────────────────────────────────────────────────
   {
     id: 'virustotal',
     name: 'VirusTotal',
@@ -111,17 +439,17 @@ const SOURCES: SourceDef[] = [
     sensitiveKeys: new Set(['ABUSEIPDB_API_KEY']),
   },
   {
-    id: 'suricata',
-    name: 'Suricata IDS',
-    type: 'IDS/IPS',
-    description: 'Network IDS — push logs via ingest API or EVE JSON path',
-    keys: ['SURICATA_EVE_PATH'],
-    testSource: null,
-    requiredKeys: ['SURICATA_EVE_PATH'],
-    keyLabels: { SURICATA_EVE_PATH: 'EVE JSON Path' },
-    sensitiveKeys: new Set(),
-    ingestSourceName: 'Suricata',
+    id: 'shodan',
+    name: 'Shodan',
+    type: 'Enrichment',
+    description: 'Internet-exposed asset intelligence and port scanning data',
+    keys: ['SHODAN_API_KEY'],
+    testSource: 'shodan',
+    requiredKeys: ['SHODAN_API_KEY'],
+    keyLabels: { SHODAN_API_KEY: 'API Key' },
+    sensitiveKeys: new Set(['SHODAN_API_KEY']),
   },
+  // ── OS / Endpoint ─────────────────────────────────────────────────────────
   {
     id: 'windows_event',
     name: 'Windows Event Log',
@@ -135,28 +463,28 @@ const SOURCES: SourceDef[] = [
     ingestSourceName: 'WindowsEventLog',
   },
   {
-    id: 'defender',
-    name: 'Microsoft Defender',
-    type: 'EDR',
-    description: 'Pull alerts from Microsoft Defender for Endpoint',
+    id: 'linux-auditd',
+    name: 'Linux Auditd',
+    type: 'OS',
+    description: 'Push Linux audit log events via ingest API',
     keys: [],
     testSource: null,
     requiredKeys: [],
     keyLabels: {},
     sensitiveKeys: new Set(),
-    ingestSourceName: 'Defender',
+    ingestSourceName: 'LinuxAuditd',
   },
   {
-    id: 'snort',
-    name: 'Snort',
-    type: 'IDS/IPS',
-    description: 'Network IDS/IPS — push logs via ingest API',
+    id: 'syslog',
+    name: 'Syslog',
+    type: 'OS',
+    description: 'Push syslog events via ingest API',
     keys: [],
     testSource: null,
     requiredKeys: [],
     keyLabels: {},
     sensitiveKeys: new Set(),
-    ingestSourceName: 'Snort',
+    ingestSourceName: 'Syslog',
   },
 ]
 
@@ -168,48 +496,108 @@ interface AiDef {
   requiredKeys: string[]
   keyLabels: Record<string, string>
   sensitiveKeys: Set<string>
+  testSource?: string
 }
 
 const AI_PROVIDERS: AiDef[] = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'Powers alert triage, summarization, and remediation suggestions',
-    keys: ['AI_PROVIDER', 'OPENAI_API_KEY'],
+    description: 'GPT-4o — powers alert triage, summarization, and remediation suggestions',
+    keys: ['AI_PROVIDER', 'OPENAI_API_KEY', 'OPENAI_MODEL'],
     requiredKeys: ['OPENAI_API_KEY'],
-    keyLabels: { AI_PROVIDER: 'Provider', OPENAI_API_KEY: 'API Key' },
+    keyLabels: { AI_PROVIDER: 'Active Provider', OPENAI_API_KEY: 'API Key', OPENAI_MODEL: 'Model (default: gpt-4o)' },
     sensitiveKeys: new Set(['OPENAI_API_KEY']),
+    testSource: 'openai',
   },
   {
     id: 'anthropic',
     name: 'Anthropic Claude',
-    description: 'Alternative AI provider for alert analysis',
-    keys: ['ANTHROPIC_API_KEY'],
+    description: 'Claude 4 Sonnet — strong reasoning and long-context analysis',
+    keys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL'],
     requiredKeys: ['ANTHROPIC_API_KEY'],
-    keyLabels: { ANTHROPIC_API_KEY: 'API Key' },
+    keyLabels: { ANTHROPIC_API_KEY: 'API Key', ANTHROPIC_MODEL: 'Model (default: claude-sonnet-4-6)' },
     sensitiveKeys: new Set(['ANTHROPIC_API_KEY']),
+    testSource: 'anthropic',
   },
   {
     id: 'azure_openai',
     name: 'Azure OpenAI',
-    description: 'Enterprise Azure OpenAI deployment',
-    keys: ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT'],
+    description: 'Enterprise Azure OpenAI — data stays in your tenant, compliance-ready',
+    keys: ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT'],
     requiredKeys: ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT'],
     keyLabels: {
       AZURE_OPENAI_API_KEY: 'API Key',
-      AZURE_OPENAI_ENDPOINT: 'Endpoint',
+      AZURE_OPENAI_ENDPOINT: 'Endpoint URL',
+      AZURE_OPENAI_DEPLOYMENT: 'Deployment Name',
     },
     sensitiveKeys: new Set(['AZURE_OPENAI_API_KEY']),
+    testSource: 'azure-openai',
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    description: 'Gemini 2.0 Flash — fast multimodal AI from Google DeepMind',
+    keys: ['GEMINI_API_KEY', 'GEMINI_MODEL'],
+    requiredKeys: ['GEMINI_API_KEY'],
+    keyLabels: { GEMINI_API_KEY: 'API Key', GEMINI_MODEL: 'Model (default: gemini-2.0-flash)' },
+    sensitiveKeys: new Set(['GEMINI_API_KEY']),
+    testSource: 'gemini',
+  },
+  {
+    id: 'bedrock',
+    name: 'AWS Bedrock',
+    description: 'Claude, Llama, and Titan via AWS — uses your existing AWS credentials',
+    keys: ['BEDROCK_MODEL_ID'],
+    requiredKeys: [],
+    keyLabels: { BEDROCK_MODEL_ID: 'Model ID (default: anthropic.claude-3-5-sonnet-20241022-v2:0)' },
+    sensitiveKeys: new Set(),
+    testSource: 'bedrock',
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    description: 'Llama 3.3 70B via Groq LPU — ultra-fast inference at low cost',
+    keys: ['GROQ_API_KEY', 'GROQ_MODEL'],
+    requiredKeys: ['GROQ_API_KEY'],
+    keyLabels: { GROQ_API_KEY: 'API Key', GROQ_MODEL: 'Model (default: llama-3.3-70b-versatile)' },
+    sensitiveKeys: new Set(['GROQ_API_KEY']),
+    testSource: 'groq',
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral AI',
+    description: 'Mistral Large — EU-hosted, GDPR-friendly, strong at structured output',
+    keys: ['MISTRAL_API_KEY', 'MISTRAL_MODEL'],
+    requiredKeys: ['MISTRAL_API_KEY'],
+    keyLabels: { MISTRAL_API_KEY: 'API Key', MISTRAL_MODEL: 'Model (default: mistral-large-latest)' },
+    sensitiveKeys: new Set(['MISTRAL_API_KEY']),
+    testSource: 'mistral',
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama (Self-hosted)',
+    description: 'Run open-source models locally — air-gapped, no data leaves your network',
+    keys: ['OLLAMA_BASE_URL', 'OLLAMA_MODEL'],
+    requiredKeys: [],
+    keyLabels: { OLLAMA_BASE_URL: 'Base URL (default: http://localhost:11434)', OLLAMA_MODEL: 'Model (e.g. llama3.2, mistral)' },
+    sensitiveKeys: new Set(),
+    testSource: 'ollama',
   },
 ]
 
-const PUSH_SOURCE_IDS = ['windows_event', 'defender', 'suricata', 'snort']
+const PUSH_SOURCE_IDS = ['windows_event', 'defender', 'suricata', 'snort', 'zeek', 'linux-auditd', 'syslog']
 
 /* ─── AI Provider Visual Config ─── */
 const AI_VISUAL: Record<string, { icon: React.ElementType; accent: string; ring: string; color: string; model: string }> = {
-  openai: { icon: Zap, accent: 'text-emerald-400', ring: 'ring-emerald-500/40 border-emerald-500/30', color: 'from-emerald-500/20 to-teal-500/10', model: 'GPT-4o' },
-  anthropic: { icon: Brain, accent: 'text-orange-400', ring: 'ring-orange-500/40 border-orange-500/30', color: 'from-orange-500/20 to-amber-500/10', model: 'Claude 3.5 Sonnet' },
-  azure_openai: { icon: Cloud, accent: 'text-blue-400', ring: 'ring-blue-500/40 border-blue-500/30', color: 'from-blue-500/20 to-cyan-500/10', model: 'GPT-4 Turbo (Azure)' },
+  openai:      { icon: Zap,    accent: 'text-emerald-400', ring: 'ring-emerald-500/40 border-emerald-500/30', color: 'from-emerald-500/20 to-teal-500/10',   model: 'GPT-4o' },
+  anthropic:   { icon: Brain,  accent: 'text-orange-400',  ring: 'ring-orange-500/40 border-orange-500/30',  color: 'from-orange-500/20 to-amber-500/10',   model: 'Claude 4 Sonnet' },
+  azure_openai:{ icon: Cloud,  accent: 'text-blue-400',    ring: 'ring-blue-500/40 border-blue-500/30',      color: 'from-blue-500/20 to-cyan-500/10',      model: 'GPT-4o (Azure)' },
+  gemini:      { icon: Sparkles, accent: 'text-violet-400',ring: 'ring-violet-500/40 border-violet-500/30',  color: 'from-violet-500/20 to-purple-500/10',  model: 'Gemini 2.0 Flash' },
+  bedrock:     { icon: Cpu,    accent: 'text-amber-400',   ring: 'ring-amber-500/40 border-amber-500/30',    color: 'from-amber-500/20 to-yellow-500/10',   model: 'Claude via AWS Bedrock' },
+  groq:        { icon: Zap,    accent: 'text-rose-400',    ring: 'ring-rose-500/40 border-rose-500/30',      color: 'from-rose-500/20 to-pink-500/10',      model: 'Llama 3.3 70B' },
+  mistral:     { icon: Brain,  accent: 'text-indigo-400',  ring: 'ring-indigo-500/40 border-indigo-500/30',  color: 'from-indigo-500/20 to-blue-500/10',    model: 'Mistral Large' },
+  ollama:      { icon: Cpu,    accent: 'text-slate-400',   ring: 'ring-slate-500/40 border-slate-500/30',    color: 'from-slate-500/20 to-zinc-500/10',     model: 'Local (self-hosted)' },
 }
 
 /* ─── Notification Integrations ─── */
@@ -290,9 +678,154 @@ function mapTestMessage(sourceId: string, status: string, message: string, form:
   return message || 'Connection failed'
 }
 
+// ─── SSO Group Mappings ───────────────────────────────────────────────────────
+interface SSOProvider { id: number; provider_type: string; domain: string; client_id: string; is_active: boolean }
+interface GroupMapping { id: number; provider_id: number; group_name: string; role: string; is_active: boolean }
+
+function SSOGroupMappingsTab() {
+  const qc = useQueryClient()
+  const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null)
+  const [groupName, setGroupName] = useState('')
+  const [role, setRole] = useState<'viewer' | 'analyst' | 'senior_analyst' | 'admin'>('analyst')
+
+  const { data: providers = [], isLoading: loadingProviders } = useQuery({
+    queryKey: ['sso-providers'],
+    queryFn: () => get<SSOProvider[]>('/auth/sso/providers'),
+  })
+
+  // auto-select first provider
+  const providerIdRef = useRef<number | null>(null)
+  useEffect(() => {
+    const first = providers[0]
+    if (first && providerIdRef.current === null) {
+      providerIdRef.current = first.id
+      setSelectedProviderId(first.id)
+    }
+  }, [providers])
+
+  const { data: mappings = [], isLoading: loadingMappings } = useQuery({
+    queryKey: ['sso-group-mappings', selectedProviderId],
+    queryFn: () => get<GroupMapping[]>(`/auth/sso/providers/${selectedProviderId}/group-mappings`),
+    enabled: selectedProviderId !== null,
+  })
+
+  const createMut = useMutation({
+    mutationFn: (body: object) => post<GroupMapping>(`/auth/sso/providers/${selectedProviderId}/group-mappings`, body),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['sso-group-mappings'] }); setGroupName(''); toast.success('Mapping added') },
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => del<void>(`/auth/sso/providers/${selectedProviderId}/group-mappings/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['sso-group-mappings'] }),
+  })
+
+  const toggleMut = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
+      patch<GroupMapping>(`/auth/sso/providers/${selectedProviderId}/group-mappings/${id}`, { is_active }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['sso-group-mappings'] }),
+  })
+
+  if (loadingProviders) return <div className="glass-card p-6 text-sm text-muted-foreground">Loading SSO providers…</div>
+
+  if (providers.length === 0) {
+    return (
+      <div className="glass-card rounded-xl border border-border/50 p-8 text-center">
+        <Users className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+        <p className="text-sm text-muted-foreground">No SSO providers configured. Set up an OIDC provider first.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-sm font-semibold text-foreground">SSO Group → Role Mappings</h2>
+      <p className="text-xs text-muted-foreground">Map IdP groups to platform roles. The highest-ranked matching role is assigned at login.</p>
+
+      {/* Provider selector */}
+      {providers.length > 1 && (
+        <div className="flex gap-2 flex-wrap">
+          {providers.map((p) => (
+            <button key={p.id} type="button" onClick={() => setSelectedProviderId(p.id)}
+              className={cn('px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors',
+                selectedProviderId === p.id ? 'gradient-primary text-white border-transparent' : 'border-border/50 text-muted-foreground hover:text-foreground')}>
+              {p.provider_type} · {p.domain}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Add mapping form */}
+      <div className="glass-card rounded-xl border border-border/50 p-4 space-y-3">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Add Group Mapping</p>
+        <div className="flex gap-2">
+          <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)}
+            placeholder="IdP group name (e.g. soc-analysts)"
+            className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm" />
+          <select value={role} onChange={(e) => setRole(e.target.value as typeof role)}
+            className="px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm">
+            {(['viewer', 'analyst', 'senior_analyst', 'admin'] as const).map((r) => (
+              <option key={r} value={r}>{r.replace('_', ' ')}</option>
+            ))}
+          </select>
+          <button type="button" onClick={() => { if (groupName.trim()) createMut.mutate({ group_name: groupName.trim(), role }) }}
+            disabled={createMut.isPending || !groupName.trim()}
+            className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+            Add
+          </button>
+        </div>
+      </div>
+
+      {/* Mappings list */}
+      {loadingMappings ? (
+        <div className="text-xs text-muted-foreground">Loading mappings…</div>
+      ) : mappings.length === 0 ? (
+        <div className="glass-card rounded-xl border border-border/50 p-6 text-center text-sm text-muted-foreground">
+          No group mappings for this provider yet.
+        </div>
+      ) : (
+        <div className="glass-card rounded-xl border border-border/50 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border/50 bg-muted/30">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">Group</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">Role</th>
+                <th className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</th>
+                <th className="px-4 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {mappings.map((m) => (
+                <tr key={m.id} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-4 py-2.5 font-mono text-foreground text-xs">{m.group_name}</td>
+                  <td className="px-4 py-2.5 text-xs text-foreground capitalize">{m.role.replace('_', ' ')}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <button type="button" onClick={() => toggleMut.mutate({ id: m.id, is_active: !m.is_active })}
+                      className={cn('w-8 h-4 rounded-full relative transition-colors', m.is_active ? 'bg-emerald-500' : 'bg-muted')}>
+                      <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform',
+                        m.is_active ? 'translate-x-4' : 'translate-x-0.5')} />
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button type="button" onClick={() => deleteMut.mutate(m.id)} disabled={deleteMut.isPending}
+                      className="p-1 rounded border border-border/50 text-muted-foreground hover:text-red-400 hover:border-red-500/30 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('ai')
+  const [sourceSearch, setSourceSearch] = useState('')
   const [data, setData] = useState<SettingsData | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({})
@@ -522,6 +1055,36 @@ export function Settings() {
     }
   }
 
+  const runTestFromEditAi = async (def: AiDef) => {
+    if (!def.testSource) return
+    const missing = def.requiredKeys.find((k) => {
+      const v = editAiForm[k]?.trim() ?? ''
+      const existing = data?.settings?.[k]
+      return !v && existing !== REDACTED
+    })
+    if (missing) {
+      const label = def.keyLabels[missing] || missing
+      setTestMessage({ type: 'error', text: `Missing ${label}` })
+      return
+    }
+    await saveEditFormAi(def)
+    setTestingSourceId(def.testSource)
+    setTestMessage(null)
+    try {
+      const d = await post<{ status: string; message: string }>(
+        `/settings/test/${def.testSource}`
+      ).catch(() => ({ status: 'error', message: 'Connection failed' }))
+      setTestMessage(
+        d.status === 'ok'
+          ? { type: 'success', text: d.message || 'Connection successful' }
+          : { type: 'error', text: d.message || 'Connection failed' }
+      )
+      setTestPassed(def.id, d.status === 'ok')
+    } finally {
+      setTestingSourceId(null)
+    }
+  }
+
   const runTestFromEdit = async (def: SourceDef) => {
     const missing = def.requiredKeys.find((k) => {
       const v = editForm[k]?.trim() ?? ''
@@ -619,7 +1182,7 @@ export function Settings() {
     { id: 'ai' as Tab, label: 'AI Configuration', icon: Sparkles },
     { id: 'sources' as Tab, label: 'Source Integrations', icon: Database },
     { id: 'notifications' as Tab, label: 'Notifications', icon: Bell },
-    { id: 'users' as Tab, label: 'Users', icon: Users },
+    { id: 'sso' as Tab, label: 'SSO / Group Mappings', icon: Users },
   ]
 
   if (!user || user.role !== 'admin') {
@@ -734,73 +1297,146 @@ export function Settings() {
       )}
 
       {tab === 'sources' && (
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold">Source Integrations</h2>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Configure data sources and log collectors for the platform</p>
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Source Integrations</h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Configure data sources and log collectors — {SOURCE_CATALOG.length} integrations available
+              </p>
+            </div>
+            {/* Search */}
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search sources…"
+                value={sourceSearch}
+                onChange={(e) => setSourceSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border bg-background text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
           </div>
-          {SOURCES.map((def) => {
-            const status = sourceStatus(def)
-            const isConfigured = status === 'configured'
-            const isPushOnly = PUSH_SOURCE_IDS.includes(def.id)
+
+          {/* Source rows — all 29 catalog sources */}
+          {(() => {
+            const q = sourceSearch.toLowerCase()
+            const visible = SOURCE_CATALOG.filter(
+              (s) =>
+                !q ||
+                s.name.toLowerCase().includes(q) ||
+                s.vendor.toLowerCase().includes(q) ||
+                s.type.toLowerCase().includes(q)
+            )
+            if (visible.length === 0) {
+              return (
+                <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+                  No sources match your search.
+                </div>
+              )
+            }
             return (
-              <div
-                key={def.id}
-                className="glass-card rounded-xl p-4 flex items-center justify-between gap-4"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <h3 className="text-sm font-semibold">{def.name}</h3>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{def.type}</span>
-                    <span
-                      className={cn(
-                        'text-[10px] px-1.5 py-0.5 rounded border',
-                        (status === 'configured' || status === 'active') && 'bg-green-500/15 text-green-400 border-green-500/30',
-                        status === 'push_ready' && 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-                        status === 'not_configured' && 'bg-muted text-muted-foreground border-border'
-                      )}
+              <div className="space-y-2">
+                {visible.map((catalogEntry) => {
+                  // Find matching SourceDef for configure/test/delete actions
+                  const def = SOURCES.find((s) => s.id === catalogEntry.id)
+                  const status = def ? sourceStatus(def) : 'not_configured'
+                  const isConfigured = status === 'configured' || status === 'active'
+                  const isPushSource = catalogEntry.push
+
+                  return (
+                    <div
+                      key={catalogEntry.id}
+                      className="glass-card rounded-xl p-3.5 flex items-center gap-3"
                     >
-                      {status === 'configured' ? 'Configured' : status === 'active' ? 'Active' : status === 'push_ready' ? 'Push Ready' : 'Not Configured'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{def.description}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {isPushOnly && (
-                    <button
-                      type="button"
-                      onClick={() => setSetupGuideSourceId(def.id)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/30 text-sm"
-                      aria-label={`Setup guide for ${def.name}`}
-                    >
-                      <BookOpen className="w-4 h-4" />
-                      Setup Guide
-                    </button>
-                  )}
-                  {def.keys.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => openEdit(def)}
-                      className="p-2 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                      aria-label={`Edit ${def.name}`}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                  )}
-                  {isConfigured && def.keys.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setDeleteConfirmSource(def)}
-                      className="p-2 rounded border border-border text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
-                      aria-label={`Delete ${def.name}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
+                      {/* Logo */}
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center border border-border shrink-0"
+                        style={{ backgroundColor: catalogEntry.logoBg }}
+                      >
+                        <SourceLogo sourceId={catalogEntry.id} size={20} />
+                      </div>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                          <span className="text-sm font-medium text-foreground">{catalogEntry.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{catalogEntry.type}</span>
+                          <span className={cn(
+                            'text-[9px] px-1.5 py-0.5 rounded border',
+                            isPushSource
+                              ? 'bg-purple-500/15 text-purple-400 border-purple-500/25'
+                              : 'bg-sky-500/15 text-sky-400 border-sky-500/25'
+                          )}>
+                            {isPushSource ? 'Push' : 'Pull'}
+                          </span>
+                          <span className={cn(
+                            'text-[9px] px-1.5 py-0.5 rounded border',
+                            isConfigured
+                              ? 'bg-green-500/15 text-green-400 border-green-500/30'
+                              : status === 'push_ready'
+                                ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                                : 'bg-muted text-muted-foreground border-border'
+                          )}>
+                            {isConfigured ? 'Configured' : status === 'push_ready' ? 'Push Ready' : 'Not Configured'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">{catalogEntry.overview.slice(0, 80)}…</p>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Docs link — always */}
+                        <button
+                          type="button"
+                          onClick={() => navigate('/app/help?tab=integrations&source=' + catalogEntry.id)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                        >
+                          <BookOpen className="w-3 h-3" />
+                          Docs
+                        </button>
+
+                        {/* Configure — if SOURCES has this entry */}
+                        {def && def.keys.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => openEdit(def)}
+                            className="p-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                            aria-label={`Configure ${catalogEntry.name}`}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        {/* Setup guide for push sources */}
+                        {isPushSource && (
+                          <button
+                            type="button"
+                            onClick={() => setSetupGuideSourceId(catalogEntry.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded gradient-primary text-primary-foreground text-[10px] font-medium"
+                          >
+                            Setup
+                          </button>
+                        )}
+
+                        {/* Delete — only if configured */}
+                        {def && isConfigured && def.keys.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmSource(def)}
+                            className="p-1.5 rounded border border-border text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            aria-label={`Remove ${catalogEntry.name}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )
-          })}
+          })()}
         </div>
       )}
 
@@ -921,19 +1557,8 @@ export function Settings() {
         </div>
       )}
 
-      {tab === 'users' && (
-        <div className="glass-card rounded-xl p-5">
-          <h3 className="text-sm font-semibold mb-1">User Management</h3>
-          <p className="text-xs text-muted-foreground mb-4">Create and manage analyst accounts with role-based access</p>
-          <a
-            href="/app/users"
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg gradient-primary text-primary-foreground text-sm"
-          >
-            <Users className="w-4 h-4" />
-            Manage Users
-          </a>
-        </div>
-      )}
+      {/* ─── SSO Group Mappings ─── */}
+      {tab === 'sso' && <SSOGroupMappingsTab />}
 
       {/* Edit panel (slide-in) */}
       {editingSource && (
@@ -1019,7 +1644,7 @@ export function Settings() {
                         const isRedactedKept = data?.settings?.[k] === REDACTED
                         return !hasValue && !isRedactedKept
                       })}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:opacity-90 disabled:opacity-50"
                     >
                       {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                       Save
@@ -1123,27 +1748,47 @@ export function Settings() {
                   )
                 })}
               </div>
-              <div className="mt-6 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => saveEditFormAi(editingAi)}
-                  disabled={saving || editingAi.requiredKeys.some((k) => {
-                    const hasValue = (editAiForm[k] ?? '').trim() !== ''
-                    const isRedactedKept = data?.settings?.[k] === REDACTED
-                    return !hasValue && !isRedactedKept
-                  })}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={closeEditAi}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-muted-foreground text-sm hover:bg-muted/30"
-                >
-                  Cancel
-                </button>
+              <div className="mt-6 space-y-3">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => saveEditFormAi(editingAi)}
+                    disabled={saving || editingAi.requiredKeys.some((k) => {
+                      const hasValue = (editAiForm[k] ?? '').trim() !== ''
+                      const isRedactedKept = data?.settings?.[k] === REDACTED
+                      return !hasValue && !isRedactedKept
+                    })}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:opacity-90 disabled:opacity-50"
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    Save
+                  </button>
+                  {editingAi.testSource && (
+                    <button
+                      type="button"
+                      onClick={() => runTestFromEditAi(editingAi)}
+                      disabled={testingSourceId === editingAi.testSource}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-foreground text-sm hover:bg-muted/30 disabled:opacity-50"
+                    >
+                      {testingSourceId === editingAi.testSource ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : null}
+                      Test Connection
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeEditAi}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-muted-foreground text-sm hover:bg-muted/30"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {testMessage && (
+                  <p className={cn('text-sm', testMessage.type === 'success' ? 'text-green-400' : 'text-red-400')}>
+                    {testMessage.text}
+                  </p>
+                )}
               </div>
             </div>
           </div>

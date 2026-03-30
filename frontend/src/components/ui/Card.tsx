@@ -14,7 +14,7 @@ export function Card({ children, className, onClick }: CardProps) {
       onClick={onClick}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
       className={cn(
-        'rounded-2xl border border-soc-border bg-soc-surface p-5 backdrop-blur-xl',
+        'rounded-2xl border border-border/50 bg-card p-5 backdrop-blur-xl',
         'transition-all duration-200',
         onClick
           ? 'cursor-pointer hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.995]'
@@ -45,7 +45,7 @@ interface CardHeaderProps {
 export function CardHeader({ title, action, className }: CardHeaderProps) {
   return (
     <div className={cn('flex items-center justify-between mb-4', className)}>
-      <h3 className="text-sm font-semibold text-soc-text">{title}</h3>
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       {action}
     </div>
   )

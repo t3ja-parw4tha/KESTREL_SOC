@@ -2,29 +2,59 @@
 
 import httpx
 import logging
+import uuid
 from datetime import datetime, timezone
+from typing import Any, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import jwt as pyjwt
 
 from app.database import get_db
-from app.models import SSOProvider, User
+from app.models import Alert, AuditLog, SSOGroupRoleMapping, SSOProvider, User
+from app.models.alert import AlertSeverity, AlertStatus
 from app.security.auth import (
     create_access_token,
     create_refresh_token,
     create_session,
     REFRESH_TOKEN_COOKIE,
+    hash_password,
 )
 from app.config import get_settings
+from app.security.rbac import require_permission
+from app.services.ldap_sync import fetch_ldap_users
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/sso", tags=["sso"])
 
 REFRESH_COOKIE_MAX_AGE = 7 * 24 * 3600
+_ROLE_RANK = {"viewer": 1, "analyst": 2, "senior_analyst": 3, "admin": 4}
+
+
+class GroupRoleMappingCreate(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=255)
+    role: Literal["viewer", "analyst", "senior_analyst", "admin"]
+    is_active: bool = True
+
+
+class GroupRoleMappingUpdate(BaseModel):
+    group_name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: Literal["viewer", "analyst", "senior_analyst", "admin"] | None = None
+    is_active: bool | None = None
+
+
+class GroupRoleMappingResponse(BaseModel):
+    id: int
+    provider_id: int
+    group_name: str
+    role: str
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
     response.set_cookie(
@@ -35,6 +65,94 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         secure=not get_settings().debug,
         samesite="lax",
         path="/",
+    )
+
+
+def _extract_idp_groups(payload: dict[str, Any]) -> list[str]:
+    raw_groups = payload.get("groups")
+    if isinstance(raw_groups, list):
+        return [str(g).strip() for g in raw_groups if str(g).strip()]
+    if isinstance(raw_groups, str) and raw_groups.strip():
+        return [raw_groups.strip()]
+    return []
+
+
+async def _resolve_role_from_groups(
+    db: AsyncSession,
+    provider_id: int,
+    idp_groups: list[str],
+) -> str | None:
+    """Return highest-mapped role from IdP groups, or None if no mapping exists."""
+    if not idp_groups:
+        return None
+
+    normalized_groups = {g.lower() for g in idp_groups}
+    mappings = (
+        await db.execute(
+            select(SSOGroupRoleMapping).where(
+                SSOGroupRoleMapping.provider_id == provider_id,
+                SSOGroupRoleMapping.is_active.is_(True),
+            )
+        )
+    ).scalars().all()
+
+    matched_roles: list[str] = []
+    for mapping in mappings:
+        if mapping.group_name.lower() in normalized_groups:
+            matched_roles.append(mapping.role)
+
+    if not matched_roles:
+        return None
+
+    return max(matched_roles, key=lambda role: _ROLE_RANK.get(role, 0))
+
+
+async def _emit_sso_drift_alert(
+    db: AsyncSession,
+    provider: SSOProvider,
+    email: str,
+    reason: str,
+    idp_groups: list[str],
+    mapped_role: str | None,
+    existing_role: str | None,
+) -> None:
+    """Create auditable drift records when SSO governance detects mismatches."""
+    details = {
+        "provider_id": provider.id,
+        "provider_domain": provider.domain,
+        "email": email,
+        "reason": reason,
+        "idp_groups": idp_groups,
+        "mapped_role": mapped_role,
+        "existing_role": existing_role,
+    }
+    db.add(
+        AuditLog(
+            id=str(uuid.uuid4()),
+            action="sso_group_sync_drift",
+            analyst="system",
+            details=details,
+        )
+    )
+
+    severity = AlertSeverity.HIGH if reason == "unmapped_group_default_deny" else AlertSeverity.MEDIUM
+    title = (
+        f"SSO governance denied unmapped group login for {email}"
+        if reason == "unmapped_group_default_deny"
+        else f"SSO role drift corrected for {email}: {existing_role} -> {mapped_role}"
+    )
+    db.add(
+        Alert(
+            id=str(uuid.uuid4()),
+            title=title[:512],
+            source="sso-governance",
+            severity=severity,
+            category="identity",
+            status=AlertStatus.OPEN,
+            user_id=email,
+            enrichment=details,
+            raw={"event": "sso_governance_drift", **details},
+        )
     )
 
 async def _get_oidc_config(issuer_url: str) -> dict:
@@ -88,9 +206,7 @@ async def sso_login(
     request.session["sso_nonce"] = nonce
     request.session["sso_provider_id"] = provider.id
 
-    # Build callback URL
-    app_settings = get_settings()
-    # E.g., http://localhost:5173 or platform base url. We get it from request host for now.
+    # Build callback URL from request host
     base_url = f"{request.url.scheme}://{request.url.netloc}"
     # But usually frontend initiates. We can use a relative or absolute URL. 
     # The actual callback is to parsing it on backend. Let's use backend origin.
@@ -113,18 +229,18 @@ async def sso_login(
 @router.get("/callback")
 async def sso_callback(
     request: Request,
-    state: str = None,
-    code: str = None,
-    error: str = None,
+    state: str | None = None,
+    code: str | None = None,
+    error: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Handle OIDC callback from IdP, exchange code, verify JWT, issue our tokens."""
     if error:
         logger.warning("SSO error returned from IdP: %s", error)
-        return RedirectResponse(f"/?error=sso_failed")
+        return RedirectResponse("/?error=sso_failed")
 
     if not code or not state:
-        return RedirectResponse(f"/?error=missing_params")
+        return RedirectResponse("/?error=missing_params")
 
     session_state = request.session.pop("sso_state", None)
     nonce = request.session.pop("sso_nonce", None)
@@ -132,26 +248,26 @@ async def sso_callback(
 
     if not session_state or state != session_state:
         logger.warning("SSO state mismatch or missing session")
-        return RedirectResponse(f"/?error=invalid_state")
+        return RedirectResponse("/?error=invalid_state")
 
     stmt = select(SSOProvider).where(SSOProvider.id == provider_id, SSOProvider.is_active.is_(True))
     r = await db.execute(stmt)
     provider = r.scalar_one_or_none()
     
     if not provider:
-        return RedirectResponse(f"/?error=provider_not_found")
+        return RedirectResponse("/?error=provider_not_found")
 
     try:
         oidc_config = await _get_oidc_config(provider.issuer_url)
     except Exception as e:
         logger.error("Failed to fetch OIDC config during callback: %s", e)
-        return RedirectResponse(f"/?error=idp_unreachable")
+        return RedirectResponse("/?error=idp_unreachable")
 
     token_endpoint = oidc_config.get("token_endpoint")
     jwks_uri = oidc_config.get("jwks_uri")
     
     if not token_endpoint or not jwks_uri:
-        return RedirectResponse(f"/?error=invalid_idp_config")
+        return RedirectResponse("/?error=invalid_idp_config")
 
     base_url = f"{request.url.scheme}://{request.url.netloc}"
     redirect_uri = f"{base_url}/api/v1/auth/sso/callback"
@@ -169,13 +285,13 @@ async def sso_callback(
         )
         if token_resp.status_code != 200:
             logger.error("Token exchange failed: %s", token_resp.text)
-            return RedirectResponse(f"/?error=token_exchange_failed")
+            return RedirectResponse("/?error=token_exchange_failed")
             
         token_data = token_resp.json()
         id_token = token_data.get("id_token")
 
         if not id_token:
-            return RedirectResponse(f"/?error=no_id_token")
+            return RedirectResponse("/?error=no_id_token")
 
         # Fetch JWKS to verify signature (PyJWT handles it nicely with PyJWKClient)
         jwks_client = pyjwt.PyJWKClient(jwks_uri)
@@ -191,34 +307,61 @@ async def sso_callback(
             )
         except pyjwt.InvalidTokenError as e:
             logger.error("ID Token verification failed: %s", e)
-            return RedirectResponse(f"/?error=invalid_id_token")
+            return RedirectResponse("/?error=invalid_id_token")
 
     # Validate nonce
     if payload.get("nonce") != nonce:
         logger.warning("SSO nonce mismatch")
-        return RedirectResponse(f"/?error=invalid_nonce")
+        return RedirectResponse("/?error=invalid_nonce")
 
     # The user authenticated successfully with their IdP.
     sso_sub = payload.get("sub")
     email = payload.get("email") or payload.get("upn") or payload.get("preferred_username")
 
     if not sso_sub or not email:
-        return RedirectResponse(f"/?error=missing_claims")
+        return RedirectResponse("/?error=missing_claims")
 
     email = email.lower()
+    idp_groups = _extract_idp_groups(payload)
+
+    mapped_role = await _resolve_role_from_groups(db, provider.id, idp_groups)
+    if mapped_role is None:
+        await _emit_sso_drift_alert(
+            db=db,
+            provider=provider,
+            email=email,
+            reason="unmapped_group_default_deny",
+            idp_groups=idp_groups,
+            mapped_role=None,
+            existing_role=None,
+        )
+        await db.commit()
+        return RedirectResponse("/?error=access_denied")
 
     # Look for existing user
-    stmt = select(User).where((User.sso_id == sso_sub) | (User.email == email))
-    r = await db.execute(stmt)
-    user = r.scalars().first()
+    user_stmt = select(User).where((User.sso_id == sso_sub) | (User.email == email))
+    user_result = await db.execute(user_stmt)
+    db_user = user_result.scalars().first()
 
-    if user:
-        if not user.is_active:
-            return RedirectResponse(f"/?error=account_disabled")
+    if db_user:
+        if not db_user.is_active:
+            return RedirectResponse("/?error=account_disabled")
         # Update sso_id if they previously logged in with password but now use SSO
-        if user.sso_id != sso_sub:
-            user.sso_id = sso_sub
-            await db.commit()
+        if db_user.sso_id != sso_sub:
+            db_user.sso_id = sso_sub
+        if db_user.role != mapped_role:
+            previous_role = db_user.role
+            db_user.role = mapped_role
+            await _emit_sso_drift_alert(
+                db=db,
+                provider=provider,
+                email=email,
+                reason="role_mapping_drift_corrected",
+                idp_groups=idp_groups,
+                mapped_role=mapped_role,
+                existing_role=previous_role,
+            )
+        await db.commit()
     else:
         # Auto-provision new user
         # Generate random username based on email
@@ -231,31 +374,32 @@ async def sso_callback(
         else:
             username = base_username
 
-        user = User(
+        db_user = User(
             username=username,
             email=email,
-            password_hash=None, # No local password
-            role="analyst",     # Default role
+            # Keep local password auth effectively disabled but satisfy strict DB schemas.
+            password_hash=hash_password(f"sso-only-{sso_sub}"),
+            role=mapped_role,
             is_active=True,
             sso_id=sso_sub,
             updated_at=datetime.now(timezone.utc),
         )
-        db.add(user)
+        db.add(db_user)
         await db.commit()
 
     # Issue KESTREL local tokens
-    access_token, _ = create_access_token(user.id, user.role)
-    refresh_token, refresh_jti = create_refresh_token(user.id, user.role)
+    access_token, _ = create_access_token(db_user.id, db_user.role)
+    refresh_token, refresh_jti = create_refresh_token(db_user.id, db_user.role)
     
     await create_session(
         db,
-        user.id,
+        db_user.id,
         refresh_jti,
         request.client.host if request.client else None,
         request.headers.get("user-agent"),
     )
 
-    response = RedirectResponse(f"/?sso_success=true")
+    response = RedirectResponse("/?sso_success=true")
     # We can't easily pass the access token in URL fragment cleanly from backend redirect, 
     # but we can set it as a temporary cookie that JS reads and deletes, OR we can rely solely 
     # on the refresh token which is HttpOnly. 
@@ -272,3 +416,223 @@ async def sso_callback(
     _set_refresh_cookie(response, refresh_token)
     
     return response
+
+
+@router.get("/providers")
+async def list_sso_providers(
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all configured SSO providers (admin only)."""
+    rows = (await db.execute(select(SSOProvider).order_by(SSOProvider.id.asc()))).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "provider_type": r.name,
+            "domain": r.domain,
+            "client_id": r.client_id,
+            "is_active": r.is_active,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/ldap/sync")
+async def ldap_sync(
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync users from LDAP into local user table (role defaults to analyst)."""
+    ldap_users = fetch_ldap_users()
+
+    created = 0
+    updated = 0
+    skipped = 0
+    for entry in ldap_users:
+        username = (entry.get("username") or "").strip().lower()
+        email = (entry.get("email") or "").strip().lower()
+        if not username or not email:
+            skipped += 1
+            continue
+
+        existing_stmt = select(User).where((User.username == username) | (User.email == email))
+        existing = (await db.execute(existing_stmt)).scalars().first()
+        if existing:
+            changed = False
+            if existing.email != email:
+                existing.email = email
+                changed = True
+            if existing.username != username:
+                existing.username = username
+                changed = True
+            if changed:
+                existing.updated_at = datetime.now(timezone.utc)
+                updated += 1
+            else:
+                skipped += 1
+            continue
+
+        user = User(
+            username=username,
+            email=email,
+            password_hash=hash_password(f"ldap-only-{username}"),
+            role="analyst",
+            is_active=True,
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        created += 1
+
+    await db.commit()
+    return {
+        "fetched": len(ldap_users),
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+    }
+
+
+@router.get("/providers/{provider_id}/group-mappings", response_model=list[GroupRoleMappingResponse])
+async def list_group_role_mappings(
+    provider_id: int,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    provider = (await db.execute(select(SSOProvider).where(SSOProvider.id == provider_id))).scalar_one_or_none()
+    if not provider:
+        raise HTTPException(status_code=404, detail="SSO provider not found")
+
+    rows = (
+        await db.execute(
+            select(SSOGroupRoleMapping)
+            .where(SSOGroupRoleMapping.provider_id == provider_id)
+            .order_by(SSOGroupRoleMapping.group_name.asc())
+        )
+    ).scalars().all()
+    return [
+        GroupRoleMappingResponse(
+            id=r.id,
+            provider_id=r.provider_id,
+            group_name=r.group_name,
+            role=r.role,
+            is_active=r.is_active,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/providers/{provider_id}/group-mappings", response_model=GroupRoleMappingResponse, status_code=201)
+async def create_group_role_mapping(
+    provider_id: int,
+    body: GroupRoleMappingCreate,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    provider = (await db.execute(select(SSOProvider).where(SSOProvider.id == provider_id))).scalar_one_or_none()
+    if not provider:
+        raise HTTPException(status_code=404, detail="SSO provider not found")
+
+    normalized_group = body.group_name.strip()
+    existing = (
+        await db.execute(
+            select(SSOGroupRoleMapping).where(
+                SSOGroupRoleMapping.provider_id == provider_id,
+                SSOGroupRoleMapping.group_name == normalized_group,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Group mapping already exists for provider")
+
+    row = SSOGroupRoleMapping(
+        provider_id=provider_id,
+        group_name=normalized_group,
+        role=body.role,
+        is_active=body.is_active,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return GroupRoleMappingResponse(
+        id=row.id,
+        provider_id=row.provider_id,
+        group_name=row.group_name,
+        role=row.role,
+        is_active=row.is_active,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.patch("/providers/{provider_id}/group-mappings/{mapping_id}", response_model=GroupRoleMappingResponse)
+async def update_group_role_mapping(
+    provider_id: int,
+    mapping_id: int,
+    body: GroupRoleMappingUpdate,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    row = (
+        await db.execute(
+            select(SSOGroupRoleMapping).where(
+                SSOGroupRoleMapping.id == mapping_id,
+                SSOGroupRoleMapping.provider_id == provider_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Group mapping not found")
+
+    payload = body.model_dump(exclude_unset=True)
+    if "group_name" in payload and payload["group_name"]:
+        payload["group_name"] = str(payload["group_name"]).strip()
+    if "group_name" in payload and payload["group_name"] != row.group_name:
+        dup = (
+            await db.execute(
+                select(SSOGroupRoleMapping).where(
+                    SSOGroupRoleMapping.provider_id == provider_id,
+                    SSOGroupRoleMapping.group_name == payload["group_name"],
+                    SSOGroupRoleMapping.id != row.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=409, detail="Group mapping already exists for provider")
+
+    for key, value in payload.items():
+        setattr(row, key, value)
+
+    await db.commit()
+    await db.refresh(row)
+    return GroupRoleMappingResponse(
+        id=row.id,
+        provider_id=row.provider_id,
+        group_name=row.group_name,
+        role=row.role,
+        is_active=row.is_active,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.delete("/providers/{provider_id}/group-mappings/{mapping_id}", status_code=204)
+async def delete_group_role_mapping(
+    provider_id: int,
+    mapping_id: int,
+    _admin: dict = Depends(require_permission("admin:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    row = (
+        await db.execute(
+            select(SSOGroupRoleMapping).where(
+                SSOGroupRoleMapping.id == mapping_id,
+                SSOGroupRoleMapping.provider_id == provider_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Group mapping not found")
+    await db.delete(row)
+    await db.commit()

@@ -17,25 +17,25 @@ export function SessionTimeoutModal() {
       aria-labelledby="session-timeout-title"
       aria-modal="true"
     >
-      <div className="bg-soc-surface border-2 border-soc-border rounded-xl shadow-2xl p-6 max-w-sm mx-4 w-full opacity-100">
-        <h2 id="session-timeout-title" className="text-lg font-semibold text-soc-text mb-2">
+      <div className="bg-card border-2 border-border rounded-xl shadow-2xl p-6 max-w-sm mx-4 w-full opacity-100">
+        <h2 id="session-timeout-title" className="text-lg font-semibold text-foreground mb-2">
           Session expiring
         </h2>
-        <p className="text-sm text-soc-muted mb-4">
+        <p className="text-sm text-muted-foreground mb-4">
           You’ve been inactive for 5 minutes. Stay signed in or sign out.
         </p>
         <div className="flex gap-2 justify-end">
           <button
             type="button"
             onClick={dismissSessionWarning}
-            className="px-3 py-1.5 text-sm rounded-lg border border-soc-border bg-soc-bg text-soc-text hover:bg-soc-border/50 font-medium"
+            className="px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground hover:bg-muted/50 font-medium"
           >
             Dismiss
           </button>
           <button
             type="button"
             onClick={logout}
-            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
+            className="px-3 py-1.5 text-sm rounded-lg gradient-primary text-white hover:opacity-90 font-medium"
           >
             Sign out
           </button>
