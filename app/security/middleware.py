@@ -357,9 +357,9 @@ def setup_security(app: FastAPI) -> None:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER, "X-API-Key"],
-        expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", REQUEST_ID_HEADER],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER, "X-API-Key", "If-Match"],
+        expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", REQUEST_ID_HEADER, "ETag"],
         max_age=3600,
     )
     # 2. Security headers

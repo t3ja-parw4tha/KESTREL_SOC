@@ -541,7 +541,7 @@ export function AlertDetail() {
       </nav>
 
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-col gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold text-foreground break-words">{alert.title}</h1>
           <div className="flex flex-wrap items-center gap-2 mt-2">

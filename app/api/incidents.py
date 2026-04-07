@@ -1,10 +1,12 @@
 """Incidents API router."""
 
+import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,12 @@ from app.database import get_db
 from app.models import Alert, AlertDecision
 from app.security.csrf import verify_csrf
 from app.security.rbac import require_permission
+
+
+def _actions_etag(actions: list) -> str:
+    """Compute a stable ETag from the serialised actions list."""
+    serialised = json.dumps(actions, sort_keys=True, default=str)
+    return hashlib.sha256(serialised.encode()).hexdigest()[:16]
 
 
 class ResponseActionItem(BaseModel):
@@ -357,8 +365,13 @@ async def get_incident_actions(
     incident_id: str,
     _user: Annotated[dict, Depends(require_permission("incidents:read"))],
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ) -> list[ResponseActionItem]:
-    """Return saved response actions for an incident."""
+    """Return saved response actions for an incident.
+
+    Responds with an ETag header. Clients should pass this value as
+    If-Match on the corresponding PUT request to prevent lost-update races.
+    """
     r = await db.execute(
         select(Alert).where(Alert.incident_group_id == incident_id).order_by(Alert.created_at.asc())
     )
@@ -368,22 +381,37 @@ async def get_incident_actions(
 
     anchor = _get_anchor_alert(list(alerts))
     if not anchor:
+        if response is not None:
+            response.headers["ETag"] = f'"{_actions_etag([])}"'
         return []
 
     enrichment = dict(anchor.enrichment or {})
     saved: list[dict] = enrichment.get("incident_actions") or []
-    return [ResponseActionItem(**a) for a in saved if isinstance(a, dict)]
+    actions = [ResponseActionItem(**a) for a in saved if isinstance(a, dict)]
+    if response is not None:
+        etag = _actions_etag([a.model_dump() for a in actions])
+        response.headers["ETag"] = f'"{etag}"'
+    return actions
 
 
 @router.put("/{incident_id}/actions", response_model=list[ResponseActionItem])
 async def save_incident_actions(
     incident_id: str,
     body: ResponseActionsPayload,
+    request: Request,
     _user: Annotated[dict, Depends(require_permission("incidents:write"))],
     _csrf: Annotated[None, Depends(verify_csrf)],
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ) -> list[ResponseActionItem]:
-    """Save (replace) response actions for an incident."""
+    """Save (replace) response actions for an incident.
+
+    Supports optimistic concurrency control via ETag / If-Match headers.
+    Clients should GET the current actions (noting the returned ETag) and
+    then supply ``If-Match: "<etag>"`` on this request.  If the actions
+    have been modified by another writer since the GET, this endpoint
+    returns 412 Precondition Failed rather than silently overwriting data.
+    """
     r = await db.execute(
         select(Alert).where(Alert.incident_group_id == incident_id).order_by(Alert.created_at.asc())
     )
@@ -395,9 +423,26 @@ async def save_incident_actions(
     if not anchor:
         raise HTTPException(status_code=404, detail="Incident has no alerts")
 
+    # Optimistic locking: if If-Match is supplied, verify it matches current state.
+    if_match = request.headers.get("If-Match")
+    if if_match:
+        current_saved: list[dict] = (dict(anchor.enrichment or {})).get("incident_actions") or []
+        current_actions = [ResponseActionItem(**a) for a in current_saved if isinstance(a, dict)]
+        current_etag = f'"{_actions_etag([a.model_dump() for a in current_actions])}"'
+        if if_match != current_etag:
+            raise HTTPException(
+                status_code=412,
+                detail="Precondition Failed: incident actions were modified by another request. "
+                       "Fetch the latest version (GET actions) and retry.",
+            )
+
     enrichment = dict(anchor.enrichment or {})
-    enrichment["incident_actions"] = [a.model_dump() for a in body.actions]
+    new_actions = [a.model_dump() for a in body.actions]
+    enrichment["incident_actions"] = new_actions
     anchor.enrichment = enrichment
     await db.flush()
     await db.commit()
+
+    if response is not None:
+        response.headers["ETag"] = f'"{_actions_etag(new_actions)}"'
     return body.actions

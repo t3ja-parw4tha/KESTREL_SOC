@@ -332,6 +332,14 @@ async def _resolve_username(db: AsyncSession, user_sub: int) -> str | None:
     return u.username if u else None
 
 
+async def _validate_assignee(db: AsyncSession, username: str) -> bool:
+    """Return True only if the given username exists and is active."""
+    r = await db.execute(
+        select(User).where(User.username == username, User.is_active.is_(True))
+    )
+    return r.scalar_one_or_none() is not None
+
+
 @router.patch("/bulk", response_model=dict)
 async def bulk_update_alerts(
     body: BulkAlertPatchRequest,
@@ -359,6 +367,11 @@ async def bulk_update_alerts(
             raise HTTPException(
                 status_code=422,
                 detail="assign_comment is required when bulk assigning to another user",
+            )
+        if not await _validate_assignee(db, assignee):
+            raise HTTPException(
+                status_code=422,
+                detail="Assignee user not found or is inactive",
             )
 
     # Load all alerts by id (only those that exist)
@@ -479,6 +492,11 @@ async def update_alert(
                 raise HTTPException(
                     status_code=422,
                     detail="assign_comment is required when reassigning or unassigning another analyst's alert",
+                )
+            if new_assignee and not await _validate_assignee(db, new_assignee):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Assignee user not found or is inactive",
                 )
             details["previous_assigned_to"] = old_assignee
             details["assigned_to"] = new_assignee

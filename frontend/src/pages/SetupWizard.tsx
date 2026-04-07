@@ -15,7 +15,26 @@ export function SetupWizard() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
+  const validatePassword = (password: string, username: string): string | null => {
+    if (password.length < 12) return 'Password must be at least 12 characters'
+    if (!/[A-Z]/.test(password)) return 'Password must contain an uppercase letter'
+    if (!/[a-z]/.test(password)) return 'Password must contain a lowercase letter'
+    if (!/\d/.test(password)) return 'Password must contain a number'
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?`~]/.test(password)) return 'Password must contain a special character'
+    if (username && password.toLowerCase().includes(username.toLowerCase())) return 'Password must not contain your username'
+    return null
+  }
+
   const createAdmin = async () => {
+    if (!form.username.trim()) {
+      setError('Username is required')
+      return
+    }
+    const pwError = validatePassword(form.password, form.username)
+    if (pwError) {
+      setError(pwError)
+      return
+    }
     if (form.password !== form.confirmPassword) {
       setError('Passwords do not match')
       return

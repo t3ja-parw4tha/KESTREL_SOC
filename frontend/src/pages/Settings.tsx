@@ -831,6 +831,7 @@ export function Settings() {
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const saveMsgTimer = useRef<ReturnType<typeof setTimeout>>()
   const [integrationStates, setIntegrationStates] = useState<Record<string, boolean>>(
     Object.fromEntries(NOTIF_INTEGRATIONS.map((i) => [i.id, i.id === 'slack']))
   )
@@ -863,6 +864,8 @@ export function Settings() {
     loadSettings()
   }, [loadSettings])
 
+  useEffect(() => () => clearTimeout(saveMsgTimer.current), [])
+
   useEffect(() => {
     if (tab !== 'sources') return
     const sources = ['Suricata', 'Snort', 'WindowsEventLog', 'Defender']
@@ -889,14 +892,16 @@ export function Settings() {
     if (Object.keys(subset).length === 0) {
       setSaving(false)
       setSaveMsg('Nothing to save')
-      setTimeout(() => setSaveMsg(''), 2000)
+      clearTimeout(saveMsgTimer.current)
+      saveMsgTimer.current = setTimeout(() => setSaveMsg(''), 2000)
       return
     }
     try {
       await post('/settings', { settings: subset })
       setSaveMsg('Saved successfully')
       loadSettings()
-      setTimeout(() => setSaveMsg(''), 3000)
+      clearTimeout(saveMsgTimer.current)
+      saveMsgTimer.current = setTimeout(() => setSaveMsg(''), 3000)
     } catch {
       setSaveMsg('Save failed')
     } finally {
@@ -1012,7 +1017,8 @@ export function Settings() {
       await post('/settings', { settings: toSend })
       await loadSettings()
       setSaveMsg('Saved successfully')
-      setTimeout(() => setSaveMsg(''), 3000)
+      clearTimeout(saveMsgTimer.current)
+      saveMsgTimer.current = setTimeout(() => setSaveMsg(''), 3000)
     } finally {
       setSaving(false)
     }
@@ -1049,7 +1055,8 @@ export function Settings() {
       await post('/settings', { settings: toSend })
       await loadSettings()
       setSaveMsg('Saved successfully')
-      setTimeout(() => setSaveMsg(''), 3000)
+      clearTimeout(saveMsgTimer.current)
+      saveMsgTimer.current = setTimeout(() => setSaveMsg(''), 3000)
     } finally {
       setSaving(false)
     }

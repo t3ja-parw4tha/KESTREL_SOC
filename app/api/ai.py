@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.ai.client import run_ai_triage
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -103,14 +103,26 @@ async def summarize_alert(
     }
     result = await run_ai_triage(alert_dict)
     if result:
-        alert.ai_summary = result.get("summary", "")
-        alert.ai_key_facts = result.get("key_facts") or {}
-        alert.ai_affected = result.get("affected") or {}
-        alert.ai_evidence = result.get("evidence") or {}
-        alert.ai_remediation = result.get("remediation") or {}
-        alert.ai_next_steps = result.get("next_steps") or {}
-        alert.updated_at = datetime.now(timezone.utc)
-        await db.flush()
+        import json as _json
+        now_ts = datetime.now(timezone.utc)
+        await db.execute(
+            text(
+                "UPDATE alerts SET ai_summary=:summary, ai_key_facts=:key_facts,"
+                " ai_affected=:affected, ai_evidence=:evidence,"
+                " ai_remediation=:remediation, ai_next_steps=:next_steps,"
+                " updated_at=:updated_at WHERE id=:id"
+            ),
+            {
+                "summary": result.get("summary", ""),
+                "key_facts": _json.dumps(result.get("key_facts") or {}),
+                "affected": _json.dumps(result.get("affected") or {}),
+                "evidence": _json.dumps(result.get("evidence") or {}),
+                "remediation": _json.dumps(result.get("remediation") or {}),
+                "next_steps": _json.dumps(result.get("next_steps") or {}),
+                "updated_at": now_ts.isoformat(),
+                "id": alert.id,
+            },
+        )
         await db.commit()
         return SummarizeResponse(
             alert_id=alert.id,
@@ -123,10 +135,32 @@ async def summarize_alert(
             cached=False,
         )
     else:
-        # No AI key configured — return stub in response
-        # but do NOT write to database so user can retry
-        # once they add an API key in Settings
+        # No AI key configured — save stub to DB so the UI shows the rule-based
+        # summary rather than looping on "Queuing analysis…" indefinitely.
+        # The frontend detects stubs (starts with "Summary for alert:") and shows
+        # a banner prompting the user to configure an AI provider.
+        import json as _json
         stub = _stub_ai_summary(alert)
+        now_ts = datetime.now(timezone.utc)
+        await db.execute(
+            text(
+                "UPDATE alerts SET ai_summary=:summary, ai_key_facts=:key_facts,"
+                " ai_affected=:affected, ai_evidence=:evidence,"
+                " ai_remediation=:remediation, ai_next_steps=:next_steps,"
+                " updated_at=:updated_at WHERE id=:id"
+            ),
+            {
+                "summary": stub[0],
+                "key_facts": _json.dumps(stub[1]),
+                "affected": _json.dumps(stub[2]),
+                "evidence": _json.dumps(stub[3]),
+                "remediation": _json.dumps(stub[4]),
+                "next_steps": _json.dumps(stub[5]),
+                "updated_at": now_ts.isoformat(),
+                "id": alert.id,
+            },
+        )
+        await db.commit()
         return SummarizeResponse(
             alert_id=alert.id,
             ai_summary=stub[0],

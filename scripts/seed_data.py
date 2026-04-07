@@ -344,13 +344,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-#!/usr/bin/env python3
-"""Seed database with sample data (stub)."""
-
-def main():
-    print("Seed data (stub) - implement as needed.")
-
-
-if __name__ == "__main__":
-    main()

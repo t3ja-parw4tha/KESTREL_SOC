@@ -4,8 +4,7 @@ import { useAuth } from '@/security/AuthContext'
 import { Plus, Trash2, Edit, Check, X, Shield, Activity, Workflow, Ban, ToggleLeft, ToggleRight, Globe, BookOpen, Hash, FlaskConical, AlertTriangle, Loader2 } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
-import { get, post, patch, del } from '@/api/client'
-import { getToken } from '@/api/client'
+import { get, post, patch, del, getToken, getCsrfToken } from '@/api/client'
 import { toast } from 'sonner'
 import { cn } from '@/utils/cn'
 
@@ -491,9 +490,10 @@ export function Playbooks() {
 
     const updateMutation = useMutation({
         mutationFn: async ({ id, data }: { id: number; data: Partial<Playbook> }) => {
+            const csrf = getCsrfToken()
             const res = await fetch(`/api/v1/playbooks/${id}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}`, ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
                 body: JSON.stringify(data),
             })
             if (!res.ok) throw new Error('Update failed')
@@ -507,9 +507,10 @@ export function Playbooks() {
 
     const createMutation = useMutation({
         mutationFn: async (data: Partial<Playbook>) => {
+            const csrf = getCsrfToken()
             const res = await fetch('/api/v1/playbooks', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}`, ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
                 body: JSON.stringify(data),
             })
             if (!res.ok) {
@@ -527,9 +528,10 @@ export function Playbooks() {
 
     const deleteMutation = useMutation({
         mutationFn: async (id: number) => {
+            const csrf = getCsrfToken()
             const res = await fetch(`/api/v1/playbooks/${id}`, {
                 method: 'DELETE',
-                headers: { Authorization: `Bearer ${getToken()}` },
+                headers: { Authorization: `Bearer ${getToken()}`, ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
             })
             if (!res.ok) throw new Error('Delete failed')
         },

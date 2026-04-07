@@ -34,6 +34,10 @@ export function setCsrfToken(token: string): void {
   csrfToken = token
 }
 
+export function getCsrfToken(): string | null {
+  return csrfToken
+}
+
 export function requestConfig(signal?: AbortSignal): AxiosRequestConfig {
   return { timeout: REQUEST_TIMEOUT_MS, signal }
 }

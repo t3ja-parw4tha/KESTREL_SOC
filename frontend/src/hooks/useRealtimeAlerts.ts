@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { getToken } from '@/api/client'
 
 const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(
   /^http/,
@@ -68,7 +69,7 @@ export function useRealtimeAlerts({ enabled = true, showToasts = true } = {}) {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
     setStatus('connecting')
-    const token = localStorage.getItem('kestrel_token') ?? localStorage.getItem('access_token')
+    const token = getToken()
     const url = `${WS_BASE_URL}/api/v1/ws/alerts${token ? `?token=${token}` : ''}`
 
     try {
